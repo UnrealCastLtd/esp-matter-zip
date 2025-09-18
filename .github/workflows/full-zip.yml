@@ -1,11 +1,12 @@
-name: Build ZIP
+name: Build Zips Per Submodule
 
 on:
-  workflow_dispatch:   # allows you to trigger it manually from GitHub Actions tab
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 360
 
     steps:
       - name: Checkout repo with submodules
@@ -15,12 +16,25 @@ jobs:
           ref: main
           submodules: recursive
 
-      - name: Create ZIP archive
+      - name: Remove .git folders to save space
         run: |
-          zip -r esp-matter-main.zip . -x '*.git*'
+          find . -name ".git" -type d -prune -exec rm -rf {} +
 
-      - name: Upload artifact
+      - name: Create zips for each submodule
+        run: |
+          mkdir submodule_zips
+          while read path; do
+            name=$(basename "$path")
+            echo "📦 Zipping submodule: $name ($path)"
+            if zip -r "submodule_zips/${name}.zip" "$path" > "submodule_zips/${name}.log" 2>&1; then
+              echo "✅ Successfully zipped $name"
+            else
+              echo "❌ Failed to zip $name, check submodule_zips/${name}.log"
+            fi
+          done < <(git config --file .gitmodules --get-regexp path | awk '{print $2}')
+
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: esp-matter-zip
-          path: esp-matter-main.zip
+          name: esp-matter-submodules
+          path: submodule_zips
