@@ -9,7 +9,6 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      # Step 1: Checkout main repo with token to allow push
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
@@ -17,16 +16,15 @@ jobs:
           fetch-depth: 0
           submodules: false
 
-      # Step 2: Install dependencies
       - name: Install zip and git
         run: sudo apt update && sudo apt install -y zip git
 
-      # Step 3: Recursive clone + zip + push script
       - name: Recursive zip and push
         run: |
           set -e
           ZIP_SIZE_LIMIT="2g"
           ZIP_FOLDER="Zipped-Code"
+          REPO_ROOT=$(pwd)
           mkdir -p "$ZIP_FOLDER"
 
           zip_submodule() {
@@ -35,12 +33,9 @@ jobs:
               local parent="$3"
               local out_folder="$parent/$name"
 
-              # Ensure output folder exists
-              mkdir -p "$out_folder"
-
-              # Prepare zip path in repo
-              zip_path="$ZIP_FOLDER/$out_folder/$name.zip"
-              log_path="$ZIP_FOLDER/$out_folder/$name.log"
+              # Full path for zip/log in repo
+              zip_path="$REPO_ROOT/$ZIP_FOLDER/$out_folder/$name.zip"
+              log_path="$REPO_ROOT/$ZIP_FOLDER/$out_folder/$name.log"
 
               # Skip if zip already exists
               if [ -f "$zip_path" ]; then
@@ -48,6 +43,7 @@ jobs:
                   return
               fi
 
+              # Make sure the folder exists
               mkdir -p "$(dirname "$zip_path")"
 
               # Safe temp folder
@@ -57,30 +53,30 @@ jobs:
               git clone --depth 1 "$url" "$temp_dir"
               cd "$temp_dir"
 
-              # Find nested submodules
+              # Nested submodules
               if [ -f ".gitmodules" ]; then
                   nested_submodules=$(git config --file .gitmodules --get-regexp path | awk '{print $2}')
               else
                   nested_submodules=""
               fi
 
-              # Exclude nested submodules from current zip
+              # Exclude nested submodules from zip
               exclude=""
               for sm in $nested_submodules; do
                   exclude="$exclude --exclude=$sm/*"
               done
 
               # Zip current module
-              zip -r -s $ZIP_SIZE_LIMIT "../../$zip_path" . $exclude > "../../$log_path" 2>&1 && \
-                  echo "✅ Zipped $name" || echo "❌ Failed $name, see ../../$log_path"
+              zip -r -s $ZIP_SIZE_LIMIT "$zip_path" . $exclude > "$log_path" 2>&1 && \
+                  echo "✅ Zipped $name" || echo "❌ Failed $name, see $log_path"
 
               cd ..
               rm -rf "$temp_dir"
 
-              # Commit and push zip immediately
+              # Commit and push immediately
               git config user.name "github-actions"
               git config user.email "actions@github.com"
-              git add "$zip_path" "$log_path"
+              git add "$ZIP_FOLDER/$out_folder/$name.zip" "$ZIP_FOLDER/$out_folder/$name.log"
               git commit -m "Add zip for $name" || echo "No changes to commit"
               git push origin main || echo "Push failed (possibly large file)"
 
@@ -93,6 +89,5 @@ jobs:
               done
           }
 
-          # --- Start from your fork ---
           MAIN_REPO_URL="https://github.com/UnrealCastLtd/esp-matter-zip.git"
           zip_submodule "$MAIN_REPO_URL" "esp-matter" "."
