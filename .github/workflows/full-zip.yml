@@ -9,63 +9,69 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Checkout repo with submodules
+      # Step 1: Checkout repo recursively
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          repository: ${{ github.repository }}
-          ref: main
           submodules: recursive
+          fetch-depth: 0
 
-      - name: Remove all .git folders to save space
-        run: |
-          find . -name ".git" -type d -prune -exec rm -rf {} +
+      # Step 2: Install zip if missing
+      - name: Install zip
+        run: sudo apt update && sudo apt install -y zip
 
-      - name: Recursive zip function
+      # Step 3: Remove .git folders to save space
+      - name: Remove .git folders
+        run: find . -name ".git" -type d -prune -exec rm -rf {} +
+
+      # Step 4: Recursive zip script
+      - name: Create recursive zips
         run: |
           set -e
-
-          mkdir -p recursive_zips
+          OUTPUT_DIR="recursive_zips"
+          ZIP_SIZE_LIMIT="2g"
+          mkdir -p "$OUTPUT_DIR"
 
           zip_submodule() {
-            local path="$1"
-            local dest="$2"
+              local path="$1"
+              local dest="$2"
+              local name
+              name=$(basename "$path")
+              local folder="$dest/$name"
 
-            name=$(basename "$path")
-            folder="$dest/$name"
+              echo "📦 Processing: $name ($path) -> $folder"
+              mkdir -p "$folder"
 
-            echo "📦 Processing: $name ($path) -> $folder"
-
-            mkdir -p "$folder"
-
-            # Zip all files in current folder except submodules (folders listed in .gitmodules)
-            if [ -f "$path/.gitmodules" ]; then
-              submodule_paths=$(git config --file "$path/.gitmodules" --get-regexp path | awk '{print $2}')
-            else
-              submodule_paths=""
-            fi
-
-            # Exclude submodule folders from main zip
-            exclude=""
-            for sm in $submodule_paths; do
-              exclude="$exclude --exclude=$sm/*"
-            done
-
-            zip -r "$folder/main.zip" "$path" $exclude > "$folder/main.log" 2>&1 && \
-              echo "✅ Zipped $name main.zip" || \
-              echo "❌ Failed $name, see $folder/main.log"
-
-            # Now recursively zip submodules
-            for sm in $submodule_paths; do
-              if [ -d "$path/$sm" ]; then
-                zip_submodule "$path/$sm" "$folder"
+              # Get submodule paths
+              if [ -f "$path/.gitmodules" ]; then
+                  submodule_paths=$(git config --file "$path/.gitmodules" --get-regexp path | awk '{print $2}')
+              else
+                  submodule_paths=""
               fi
-            done
+
+              # Exclude submodules from main zip
+              exclude=""
+              for sm in $submodule_paths; do
+                  exclude="$exclude --exclude=$sm/*"
+              done
+
+              # Zip current folder (excluding submodules) with split
+              zip -r -s $ZIP_SIZE_LIMIT "$folder/main.zip" "$path" $exclude > "$folder/main.log" 2>&1 && \
+                  echo "✅ Zipped $name" || echo "❌ Failed $name, see $folder/main.log"
+
+              # Recursively zip submodules
+              for sm in $submodule_paths; do
+                  if [ -d "$path/$sm" ]; then
+                      zip_submodule "$path/$sm" "$folder"
+                  fi
+              done
           }
 
-          # Start from the repo root
-          zip_submodule "." "recursive_zips"
+          # Start from repo root
+          zip_submodule "." "$OUTPUT_DIR"
 
-      - name: Upload all zips
+      # Step 5: Upload all zips as artifacts
+      - name: Upload zips
         uses: actions/upload-artifact@v4
         with:
           name: recursive-submodule-zips
