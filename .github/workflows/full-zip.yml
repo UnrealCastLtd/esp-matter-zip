@@ -1,4 +1,4 @@
-name: Recursive Submodule Zips With Named Zips
+name: Recursive Submodule Zips (Clone & Zip One-by-One)
 
 on:
   workflow_dispatch:
@@ -9,69 +9,64 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      # Step 1: Checkout repository with submodules
-      - name: Checkout repository
+      # Step 1: Checkout the main repo shallow (no submodules)
+      - name: Checkout main repo
         uses: actions/checkout@v4
         with:
-          submodules: recursive
-          fetch-depth: 0
+          submodules: false
+          fetch-depth: 1
 
-      # Step 2: Install zip
-      - name: Install zip
-        run: sudo apt update && sudo apt install -y zip
+      # Step 2: Install dependencies
+      - name: Install zip and git
+        run: sudo apt update && sudo apt install -y zip git
 
-      # Step 3: Remove .git folders to save space
-      - name: Remove .git folders
-        run: find . -name ".git" -type d -prune -exec rm -rf {} +
-
-      # Step 4: Recursive zip script with named zips
-      - name: Recursive zip-on-discovery with named zips
+      # Step 3: Recursive clone + zip script
+      - name: Clone and zip submodules one by one
         run: |
           set -e
           OUTPUT_DIR="recursive_zips"
           ZIP_SIZE_LIMIT="2g"
           mkdir -p "$OUTPUT_DIR"
 
-          zip_on_discovery() {
-              local current_path="$1"
-              local parent_output="$2"
-              local folder_name
-              folder_name=$(basename "$current_path")
-              local output_folder="$parent_output/$folder_name"
+          zip_submodule() {
+              local url="$1"
+              local name="$2"
+              local parent="$3"
+              local out_folder="$parent/$name"
+              mkdir -p "$out_folder"
 
-              echo "📦 Processing folder: $folder_name ($current_path) -> $output_folder"
-              mkdir -p "$output_folder"
+              echo "📦 Cloning $url -> $name"
+              git clone --depth 1 "$url" temp_clone
+              cd temp_clone
 
-              # Detect submodules in this folder
-              local submodules=""
-              if [ -f "$current_path/.gitmodules" ]; then
-                  submodules=$(git config --file "$current_path/.gitmodules" --get-regexp path | awk '{print $2}')
+              # Check for nested submodules
+              if [ -f ".gitmodules" ]; then
+                  submodules=$(git config --file .gitmodules --get-regexp path | awk '{print $2}')
+              else
+                  submodules=""
               fi
 
-              # Exclude submodule folders from main zip
-              local exclude=""
-              for sm in $submodules; do
-                  exclude="$exclude --exclude=$sm/*"
-              done
+              # Zip current folder (submodule) with split
+              zip -r -s $ZIP_SIZE_LIMIT "../$out_folder/$name.zip" . > "../$out_folder/$name.log" 2>&1 && \
+                echo "✅ Zipped $name" || echo "❌ Failed $name, see ../$out_folder/$name.log"
 
-              # Zip current folder excluding submodules with zip named after folder
-              zip_file="$output_folder/${folder_name}.zip"
-              zip -r -s $ZIP_SIZE_LIMIT "$zip_file" "$current_path" $exclude > "$output_folder/${folder_name}.log" 2>&1 && \
-                  echo "✅ Zipped $folder_name" || echo "❌ Failed $folder_name, see $output_folder/${folder_name}.log"
+              cd ..
+              rm -rf temp_clone
 
-              # Immediately process each submodule recursively
+              # Recursively handle nested submodules
               for sm in $submodules; do
-                  local sm_path="$current_path/$sm"
-                  if [ -d "$sm_path" ]; then
-                      zip_on_discovery "$sm_path" "$output_folder"
+                  sm_url=$(git config --file "$out_folder/$sm/.gitmodules" --get "submodule.$sm.url" || true)
+                  if [ -n "$sm_url" ]; then
+                      zip_submodule "$sm_url" "$sm" "$out_folder"
                   fi
               done
           }
 
-          # Start at repo root
-          zip_on_discovery "." "$OUTPUT_DIR"
+          # --- Start from the main repo ---
+          MAIN_REPO_URL="https://github.com/<your-fork>/esp-matter.git"  # Replace with your repo
+          zip_submodule "$MAIN_REPO_URL" "esp-matter" "$OUTPUT_DIR"
 
-      # Step 5: Upload all zips as artifacts
+      # Step 4: Upload all zips as artifacts
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
