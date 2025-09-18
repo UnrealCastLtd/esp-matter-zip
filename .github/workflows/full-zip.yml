@@ -1,0 +1,26 @@
+name: Build Full ZIP (with Submodules)
+
+on:
+  workflow_dispatch:   # Manual trigger
+
+jobs:
+  build-zip:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo with submodules
+        uses: actions/checkout@v3
+        with:
+          submodules: true
+          fetch-depth: 0
+          ref: release/v1.4.2   # target the branch you want
+
+      - name: Create ZIP archive
+        run: |
+          zip -r esp-matter-full.zip . -x "*.git*" "*.github*"
+
+      - name: Upload ZIP as artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: esp-matter-full
+          path: esp-matter-full.zip
