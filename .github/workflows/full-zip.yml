@@ -1,26 +1,26 @@
-name: Build Full ZIP (with Submodules)
+name: Build ZIP
 
 on:
-  workflow_dispatch:   # Manual trigger
+  workflow_dispatch:   # allows you to trigger it manually from GitHub Actions tab
 
 jobs:
-  build-zip:
+  build:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repo with submodules
         uses: actions/checkout@v4
         with:
-          submodules: true
-          fetch-depth: 0
-          ref: release/v1.4.2   # target the branch you want
+          repository: ${{ github.repository }}
+          ref: main
+          submodules: recursive
 
       - name: Create ZIP archive
         run: |
-          zip -r esp-matter-full.zip . -x "*.git*" "*.github*"
+          zip -r esp-matter-main.zip . -x '*.git*'
 
-      - name: Upload ZIP as artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: esp-matter-full
-          path: esp-matter-full.zip
+          name: esp-matter-zip
+          path: esp-matter-main.zip
