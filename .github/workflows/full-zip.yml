@@ -1,4 +1,4 @@
-name: Build Split Zips Per Submodule
+name: Recursive Submodule Zips
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # allow up to 6 hours
+    timeout-minutes: 360
 
     steps:
       - name: Checkout repo with submodules
@@ -16,26 +16,57 @@ jobs:
           ref: main
           submodules: recursive
 
-      - name: Remove .git folders to save space
+      - name: Remove all .git folders to save space
         run: |
           find . -name ".git" -type d -prune -exec rm -rf {} +
 
-      - name: Create submodule zips with 2GB split
+      - name: Recursive zip function
         run: |
-          mkdir -p submodule_zips
-          while read path; do
-            name=$(basename "$path")
-            echo "📦 Processing submodule: $name ($path)"
-            # create zip with 2GB split parts
-            if zip -r -s 2g "submodule_zips/${name}.zip" "$path" > "submodule_zips/${name}.log" 2>&1; then
-              echo "✅ Successfully zipped $name"
-            else
-              echo "❌ Failed to zip $name, check submodule_zips/${name}.log"
-            fi
-          done < <(git config --file .gitmodules --get-regexp path | awk '{print $2}')
+          set -e
 
-      - name: Upload zip parts and logs
+          mkdir -p recursive_zips
+
+          zip_submodule() {
+            local path="$1"
+            local dest="$2"
+
+            name=$(basename "$path")
+            folder="$dest/$name"
+
+            echo "📦 Processing: $name ($path) -> $folder"
+
+            mkdir -p "$folder"
+
+            # Zip all files in current folder except submodules (folders listed in .gitmodules)
+            if [ -f "$path/.gitmodules" ]; then
+              submodule_paths=$(git config --file "$path/.gitmodules" --get-regexp path | awk '{print $2}')
+            else
+              submodule_paths=""
+            fi
+
+            # Exclude submodule folders from main zip
+            exclude=""
+            for sm in $submodule_paths; do
+              exclude="$exclude --exclude=$sm/*"
+            done
+
+            zip -r "$folder/main.zip" "$path" $exclude > "$folder/main.log" 2>&1 && \
+              echo "✅ Zipped $name main.zip" || \
+              echo "❌ Failed $name, see $folder/main.log"
+
+            # Now recursively zip submodules
+            for sm in $submodule_paths; do
+              if [ -d "$path/$sm" ]; then
+                zip_submodule "$path/$sm" "$folder"
+              fi
+            done
+          }
+
+          # Start from the repo root
+          zip_submodule "." "recursive_zips"
+
+      - name: Upload all zips
         uses: actions/upload-artifact@v4
         with:
-          name: esp-matter-submodules
-          path: submodule_zips
+          name: recursive-submodule-zips
+          path: recursive_zips
