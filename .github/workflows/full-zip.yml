@@ -62,8 +62,8 @@ jobs:
               done
           }
 
-          # --- Start from the main repo ---
-          MAIN_REPO_URL="https://github.com/<your-fork>/esp-matter.git"  # Replace with your repo
+          # --- Start from your fork ---
+          MAIN_REPO_URL="https://github.com/UnrealCastLtd/esp-matter-zip.git"
           zip_submodule "$MAIN_REPO_URL" "esp-matter" "$OUTPUT_DIR"
 
       # Step 4: Upload all zips as artifacts
