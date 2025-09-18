@@ -1,4 +1,4 @@
-name: Zip Submodules
+name: Zip Submodules Sequentially
 
 on:
   workflow_dispatch:
@@ -8,74 +8,62 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
+      - name: Configure Git and Checkout Repository
         uses: actions/checkout@v4
         with:
-          submodules: true  # This is crucial for checking out the submodules
-
-      - name: Configure Git
+          submodules: false  # Do not checkout submodules initially
+      
+      - name: Set up Git credentials
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}
 
-      - name: Install Utilities
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y p7zip-full  # p7zip for splitting archives
+      - name: Install P7zip
+        run: sudo apt-get update && sudo apt-get install -y p7zip-full
 
       - name: Create Zipped-Code directory
+        run: mkdir -p Zipped-Code/
+
+      - name: Recursively Find and Zip Submodules
         run: |
-          mkdir -p Zipped-Code/
-          git status
+          # Use 'git ls-files -s --exclude-standard' to find all files in the repo, including those in submodules
+          # We'll use a unique identifier to handle both top-level and nested submodules
+          # The while loop processes each submodule one by one
+          git submodule foreach --recursive '
+            SUBMODULE_PATH="$sm_path"
+            SUBMODULE_NAME=$(basename "$sm_path")
+            
+            # The path for the zipped file and log will mirror the submodule's path
+            SUBMODULE_ZIP_DIR="Zipped-Code/$(dirname "$SUBMODULE_PATH")"
+            SUBMODULE_ZIP_NAME="$SUBMODULE_ZIP_DIR/$SUBMODULE_NAME.zip"
+            SUBMODULE_LOG_NAME="$SUBMODULE_ZIP_DIR/$SUBMODULE_NAME.log"
 
-      - name: Find and Zip Submodules
-        id: zip_submodules
-        run: |
-          # Use find to locate all .git files which indicate submodule roots
-          # The -print0 and xargs -0 are for handling filenames with spaces
-          find . -type f -name ".git" -print0 | while IFS= read -r -d '' git_file; do
-            # Get the path to the submodule directory
-            SUBMODULE_DIR=$(dirname "$git_file")
-            
-            # Skip the root repository's .git file
-            if [ "$SUBMODULE_DIR" == "." ]; then
-              continue
-            fi
-            
-            # The name of the zip file will be based on the submodule's path
-            SUBMODULE_ZIP_NAME="Zipped-Code/$(echo "$SUBMODULE_DIR" | sed 's/\.\///g').zip"
-            
-            # Check if the zip file already exists in the Zipped-Code/ folder
-            if git ls-files --error-unmatch --Z Zipped-Code/"$(echo "$SUBMODULE_DIR" | sed 's/\.\///g').zip" > /dev/null 2>&1; then
-              echo "Skipping already existing zip for $SUBMODULE_DIR"
+            # Check if the zip file already exists in the repo
+            if git ls-files --error-unmatch --Z "$SUBMODULE_ZIP_NAME" > /dev/null 2>&1; then
+              echo "Skipping already existing zip for $SUBMODULE_PATH"
               continue
             fi
 
-            echo "Processing submodule: $SUBMODULE_DIR"
-
-            # Check if a zip already exists locally from a previous step
-            if [ -f "$SUBMODULE_ZIP_NAME" ]; then
-              echo "Local zip already exists, skipping: $SUBMODULE_DIR"
-              continue
-            fi
-
-            # Create a log file for the zip command's output
-            LOG_FILE="Zipped-Code/$(echo "$SUBMODULE_DIR" | sed 's/\.\///g').log"
-
-            # Use 7z to create a split archive (2GB chunks)
-            # The 'x' option extracts, and we are using it to create a new archive by piping
+            echo "Processing submodule: $SUBMODULE_PATH"
+            
+            # Create the directory structure for the zip and log files if it doesn't exist
+            mkdir -p "$SUBMODULE_ZIP_DIR"
+            
+            # Clone only the current submodule (already handled by 'git submodule foreach') and zip it
+            # We are inside the submodule directory, so '7z a' will zip the current folder
             # The -v2000m flag splits the archive into 2GB chunks
-            # We exclude the .git files and sub-submodule directories
-            7z a "$SUBMODULE_ZIP_NAME" "$SUBMODULE_DIR" -v2000m -r -x!*/.git* > "$LOG_FILE" 2>&1
+            7z a "$SUBMODULE_ZIP_NAME" . -v2000m -r -x!*/.git* > "$SUBMODULE_LOG_NAME" 2>&1
 
+            # Go back to the root of the repo to commit and push
+            cd "$GITHUB_WORKSPACE"
+            
             # Commit and push the created zip and log files
-            git add "$SUBMODULE_ZIP_NAME" "$LOG_FILE"
-            git commit -m "Add zip and log for submodule: $SUBMODULE_DIR"
+            git add "$SUBMODULE_ZIP_NAME" "$SUBMODULE_LOG_NAME"
+            git commit -m "Add zip and log for submodule: $SUBMODULE_PATH"
             git push
 
-            # Clean up the temporary folder to save disk space
-            # We remove the submodule folder to avoid re-zipping and to free up space
-            rm -rf "$SUBMODULE_DIR"
-          done
+            # Clean up the temporary cloned submodule directory to save space
+            rm -rf "$SUBMODULE_PATH"
+          '
           
