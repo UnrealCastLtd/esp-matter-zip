@@ -8,11 +8,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Configure Git and Checkout Repository
+      - name: Configure Git and Checkout Main Repository
         uses: actions/checkout@v4
         with:
-          submodules: false  # Do not checkout submodules initially
-      
+          submodules: false
+          fetch-depth: 0  # Fetch all history to ensure git submodule commands work correctly
+
       - name: Set up Git credentials
         run: |
           git config --global user.name "github-actions[bot]"
@@ -27,15 +28,15 @@ jobs:
 
       - name: Recursively Find and Zip Submodules
         run: |
-          # Use 'git ls-files -s --exclude-standard' to find all files in the repo, including those in submodules
-          # We'll use a unique identifier to handle both top-level and nested submodules
-          # The while loop processes each submodule one by one
-          git submodule foreach --recursive '
-            SUBMODULE_PATH="$sm_path"
-            SUBMODULE_NAME=$(basename "$sm_path")
+          # Use 'git submodule status --recursive' to get a list of all submodules
+          # It provides the path and commit hash, which is more reliable than 'git foreach'
+          git submodule status --recursive | while read -r line; do
+            # Extract the submodule path from the output
+            SUBMODULE_PATH=$(echo "$line" | awk '{print $2}')
             
             # The path for the zipped file and log will mirror the submodule's path
             SUBMODULE_ZIP_DIR="Zipped-Code/$(dirname "$SUBMODULE_PATH")"
+            SUBMODULE_NAME=$(basename "$SUBMODULE_PATH")
             SUBMODULE_ZIP_NAME="$SUBMODULE_ZIP_DIR/$SUBMODULE_NAME.zip"
             SUBMODULE_LOG_NAME="$SUBMODULE_ZIP_DIR/$SUBMODULE_NAME.log"
 
@@ -44,16 +45,20 @@ jobs:
               echo "Skipping already existing zip for $SUBMODULE_PATH"
               continue
             fi
-
+            
             echo "Processing submodule: $SUBMODULE_PATH"
             
-            # Create the directory structure for the zip and log files if it doesn't exist
-            mkdir -p "$SUBMODULE_ZIP_DIR"
+            # Clone only the specific submodule
+            git submodule update --init --recursive -- "$SUBMODULE_PATH"
             
-            # Clone only the current submodule (already handled by 'git submodule foreach') and zip it
-            # We are inside the submodule directory, so '7z a' will zip the current folder
-            # The -v2000m flag splits the archive into 2GB chunks
-            7z a "$SUBMODULE_ZIP_NAME" . -v2000m -r -x!*/.git* > "$SUBMODULE_LOG_NAME" 2>&1
+            # Change into the submodule directory to perform the zip operation
+            cd "$SUBMODULE_PATH"
+            
+            # Create the directory structure for the zip and log files if it doesn't exist
+            mkdir -p "$GITHUB_WORKSPACE/$SUBMODULE_ZIP_DIR"
+            
+            # Use 7z to create a split archive (2GB chunks)
+            7z a "$GITHUB_WORKSPACE/$SUBMODULE_ZIP_NAME" . -v2000m -r -x!*/.git* > "$GITHUB_WORKSPACE/$SUBMODULE_LOG_NAME" 2>&1
 
             # Go back to the root of the repo to commit and push
             cd "$GITHUB_WORKSPACE"
@@ -65,5 +70,5 @@ jobs:
 
             # Clean up the temporary cloned submodule directory to save space
             rm -rf "$SUBMODULE_PATH"
-          '
+          done
           
