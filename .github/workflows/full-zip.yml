@@ -1,4 +1,4 @@
-name: Zip Submodules Sequentially (Two-Pass)
+name: Zip Submodules (Precise)
 
 on:
   workflow_dispatch:
@@ -12,8 +12,8 @@ jobs:
       - name: Checkout Main Repository
         uses: actions/checkout@v4
         with:
-          submodules: false # Do not clone submodules yet
-          fetch-depth: 0    # Fetch all history to list all submodules
+          submodules: false
+          fetch-depth: 0
 
       - name: Configure Git
         run: |
@@ -27,19 +27,19 @@ jobs:
       - name: Create Zipped-Code directory
         run: mkdir -p Zipped-Code/
 
-      - name: Index All Submodules
+      - name: Index All Submodules (including nested)
         id: index_submodules
         run: |
-          # Use 'git submodule status --recursive' to index all submodule paths.
-          # This is the "indexing" step, which is fast and uses no disk space.
+          # Use 'git submodule status --recursive' to get a clean list of all submodule paths.
           git submodule status --recursive > submodules_list.txt
 
-      - name: Process, Zip, and Push Each Submodule
+      - name: Process Each Submodule and Push Zip
         run: |
-          # Read the list of submodule paths from the file and process each one sequentially.
+          # Read the list of submodule paths from the file.
           while read -r line; do
             SUBMODULE_PATH=$(echo "$line" | awk '{print $2}')
             
+            # The destination folder structure will mirror the submodule's path.
             SUBMODULE_ZIP_DIR="Zipped-Code/$(dirname "$SUBMODULE_PATH")"
             SUBMODULE_NAME=$(basename "$SUBMODULE_PATH")
             SUBMODULE_ZIP_NAME="$SUBMODULE_ZIP_DIR/$SUBMODULE_NAME.zip"
@@ -47,7 +47,7 @@ jobs:
             
             echo "::group::Processing $SUBMODULE_PATH"
             
-            # Check if the zip file already exists in the main repo.
+            # Skip if zip already exists.
             if git ls-files --error-unmatch --Z "$SUBMODULE_ZIP_NAME" > /dev/null 2>&1; then
               echo "Skipping already existing zip for $SUBMODULE_PATH"
               echo "::endgroup::"
@@ -56,21 +56,20 @@ jobs:
             
             echo "Cloning submodule: $SUBMODULE_PATH"
             
-            # Clone only the specific submodule, but not recursively.
-            git submodule update --init -- "$SUBMODULE_PATH"
-            
-            # This is the crucial part: we are now guaranteed that only this submodule
-            # is cloned, and we can proceed to zip it.
+            # Clone only the specific submodule, ensuring a clean slate.
+            git submodule update --init --recursive -- "$SUBMODULE_PATH"
             
             echo "Zipping and creating log for $SUBMODULE_PATH"
             
             # Create the directory structure for the zip and log files if it doesn't exist.
             mkdir -p "$GITHUB_WORKSPACE/$SUBMODULE_ZIP_DIR"
             
-            # Change into the submodule's directory to perform the zipping.
+            # Change into the submodule's directory.
             cd "$SUBMODULE_PATH"
             
-            # Zip the submodule's content.
+            # Zip the submodule's content, excluding its own submodules.
+            # This is the key change: we zip the current directory's contents
+            # but exclude any nested submodules to ensure they get their own zip.
             7z a "$GITHUB_WORKSPACE/$SUBMODULE_ZIP_NAME" . -v2000m -r -x!*/.git* > "$GITHUB_WORKSPACE/$SUBMODULE_LOG_NAME" 2>&1
             
             # Move back to the main repository's root.
