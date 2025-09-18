@@ -9,18 +9,11 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      # Step 1: Checkout the main repo shallow (no submodules)
-      - name: Checkout main repo
-        uses: actions/checkout@v4
-        with:
-          submodules: false
-          fetch-depth: 1
-
-      # Step 2: Install dependencies
+      # Step 1: Install dependencies
       - name: Install zip and git
         run: sudo apt update && sudo apt install -y zip git
 
-      # Step 3: Recursive clone + zip script
+      # Step 2: Recursive clone + zip script
       - name: Clone and zip submodules one by one
         run: |
           set -e
@@ -35,38 +28,49 @@ jobs:
               local out_folder="$parent/$name"
               mkdir -p "$out_folder"
 
-              echo "📦 Cloning $url -> $name"
-              git clone --depth 1 "$url" temp_clone
-              cd temp_clone
+              local temp_dir="temp_clone_$name"
 
-              # Check for nested submodules
+              echo "📦 Cloning $url -> $name"
+              git clone --depth 1 "$url" "$temp_dir"
+              cd "$temp_dir"
+
+              # Find nested submodules in this repo
               if [ -f ".gitmodules" ]; then
-                  submodules=$(git config --file .gitmodules --get-regexp path | awk '{print $2}')
+                  nested_submodules=$(git config --file .gitmodules --get-regexp path | awk '{print $2}')
               else
-                  submodules=""
+                  nested_submodules=""
               fi
 
-              # Zip current folder (submodule) with split
-              zip -r -s $ZIP_SIZE_LIMIT "../$out_folder/$name.zip" . > "../$out_folder/$name.log" 2>&1 && \
-                echo "✅ Zipped $name" || echo "❌ Failed $name, see ../$out_folder/$name.log"
+              # Zip the current repo (excluding nested submodules)
+              exclude=""
+              for sm in $nested_submodules; do
+                  exclude="$exclude --exclude=$sm/*"
+              done
 
-              cd ..
-              rm -rf temp_clone
+              zip_file="../$out_folder/$name.zip"
+              log_file="../$out_folder/$name.log"
 
-              # Recursively handle nested submodules
-              for sm in $submodules; do
-                  sm_url=$(git config --file "$out_folder/$sm/.gitmodules" --get "submodule.$sm.url" || true)
+              zip -r -s $ZIP_SIZE_LIMIT "$zip_file" . $exclude > "$log_file" 2>&1 && \
+                echo "✅ Zipped $name" || echo "❌ Failed $name, see $log_file"
+
+              # Recursively process nested submodules
+              for sm in $nested_submodules; do
+                  sm_url=$(git config --file .gitmodules --get "submodule.$sm.url" || true)
                   if [ -n "$sm_url" ]; then
                       zip_submodule "$sm_url" "$sm" "$out_folder"
                   fi
               done
+
+              # Cleanup temp folder
+              cd ..
+              rm -rf "$temp_dir"
           }
 
           # --- Start from your fork ---
           MAIN_REPO_URL="https://github.com/UnrealCastLtd/esp-matter-zip.git"
           zip_submodule "$MAIN_REPO_URL" "esp-matter" "$OUTPUT_DIR"
 
-      # Step 4: Upload all zips as artifacts
+      # Step 3: Upload all zips as artifacts
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
