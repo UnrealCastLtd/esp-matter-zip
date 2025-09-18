@@ -1,86 +1,81 @@
-name: Recursive Submodule Zips and Push to Repo
+name: Zip Submodules
 
 on:
   workflow_dispatch:
 
 jobs:
-  build:
+  zip_submodules:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
 
     steps:
-      - name: Checkout repo
+      - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          fetch-depth: 0
-          submodules: false
+          submodules: true  # This is crucial for checking out the submodules
 
-      - name: Install dependencies
-        run: sudo apt update && sudo apt install -y zip git
-
-      - name: Recursive zip and push
+      - name: Configure Git
         run: |
-          set -e
-          ZIP_SIZE_LIMIT="2g"
-          ZIP_FOLDER="Zipped-Code"
-          REPO_ROOT=$(pwd)
-          mkdir -p "$ZIP_FOLDER"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}
 
-          zip_submodule() {
-              local url="$1"
-              local name="$2"
-              local parent="$3"
+      - name: Install Utilities
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y p7zip-full  # p7zip for splitting archives
 
-              local out_folder="$parent/$name"
-              mkdir -p "$ZIP_FOLDER/$out_folder"
+      - name: Create Zipped-Code directory
+        run: |
+          mkdir -p Zipped-Code/
+          git status
 
-              local zip_path="$REPO_ROOT/$ZIP_FOLDER/$out_folder/$name.zip"
-              local log_path="$REPO_ROOT/$ZIP_FOLDER/$out_folder/$name.log"
+      - name: Find and Zip Submodules
+        id: zip_submodules
+        run: |
+          # Use find to locate all .git files which indicate submodule roots
+          # The -print0 and xargs -0 are for handling filenames with spaces
+          find . -type f -name ".git" -print0 | while IFS= read -r -d '' git_file; do
+            # Get the path to the submodule directory
+            SUBMODULE_DIR=$(dirname "$git_file")
+            
+            # Skip the root repository's .git file
+            if [ "$SUBMODULE_DIR" == "." ]; then
+              continue
+            fi
+            
+            # The name of the zip file will be based on the submodule's path
+            SUBMODULE_ZIP_NAME="Zipped-Code/$(echo "$SUBMODULE_DIR" | sed 's/\.\///g').zip"
+            
+            # Check if the zip file already exists in the Zipped-Code/ folder
+            if git ls-files --error-unmatch --Z Zipped-Code/"$(echo "$SUBMODULE_DIR" | sed 's/\.\///g').zip" > /dev/null 2>&1; then
+              echo "Skipping already existing zip for $SUBMODULE_DIR"
+              continue
+            fi
 
-              # Skip if zip already exists
-              if [ -f "$zip_path" ]; then
-                  echo "⏭ $zip_path exists, skipping."
-                  return
-              fi
+            echo "Processing submodule: $SUBMODULE_DIR"
 
-              # Safe temp folder name
-              local temp_dir="temp_clone_$(echo "$name" | tr '/' '_')"
+            # Check if a zip already exists locally from a previous step
+            if [ -f "$SUBMODULE_ZIP_NAME" ]; then
+              echo "Local zip already exists, skipping: $SUBMODULE_DIR"
+              continue
+            fi
 
-              echo "📦 Cloning $url -> $name"
-              git clone --depth 1 --recurse-submodules "$url" "$temp_dir"
+            # Create a log file for the zip command's output
+            LOG_FILE="Zipped-Code/$(echo "$SUBMODULE_DIR" | sed 's/\.\///g').log"
 
-              # Exclude nested submodules from current zip
-              exclude=""
-              for sm in $(find "$temp_dir" -maxdepth 1 -type d -name "*"); do
-                  if [ -d "$sm/.git" ] && [ "$sm" != "$temp_dir" ]; then
-                      exclude="$exclude --exclude=$(basename "$sm")/*"
-                  fi
-              done
+            # Use 7z to create a split archive (2GB chunks)
+            # The 'x' option extracts, and we are using it to create a new archive by piping
+            # The -v2000m flag splits the archive into 2GB chunks
+            # We exclude the .git files and sub-submodule directories
+            7z a "$SUBMODULE_ZIP_NAME" "$SUBMODULE_DIR" -v2000m -r -x!*/.git* > "$LOG_FILE" 2>&1
 
-              # Zip current module
-              zip -r -s $ZIP_SIZE_LIMIT "$zip_path" "$temp_dir" $exclude > "$log_path" 2>&1 && \
-                  echo "✅ Zipped $name" || echo "❌ Failed $name, see $log_path"
+            # Commit and push the created zip and log files
+            git add "$SUBMODULE_ZIP_NAME" "$LOG_FILE"
+            git commit -m "Add zip and log for submodule: $SUBMODULE_DIR"
+            git push
 
-              # Commit & push
-              git config user.name "github-actions"
-              git config user.email "actions@github.com"
-              git add "$ZIP_FOLDER/$out_folder/$name.zip" "$ZIP_FOLDER/$out_folder/$name.log"
-              git commit -m "Add zip for $name" || echo "No changes to commit"
-              git push origin main || echo "Push failed (possibly large file)"
-
-              # Recurse into actual submodule directories
-              for sm in $(find "$temp_dir" -maxdepth 1 -type d -name "*"); do
-                  if [ -d "$sm/.git" ] && [ "$sm" != "$temp_dir" ]; then
-                      sm_name=$(basename "$sm")
-                      sm_url=$(git -C "$sm" config --get remote.origin.url)
-                      zip_submodule "$sm_url" "$sm_name" "$out_folder"
-                  fi
-              done
-
-              rm -rf "$temp_dir"
-          }
-
-          # --- Start from your fork ---
-          MAIN_REPO_URL="https://github.com/UnrealCastLtd/esp-matter-zip.git"
-          zip_submodule "$MAIN_REPO_URL" "esp-matter" "."
+            # Clean up the temporary folder to save disk space
+            # We remove the submodule folder to avoid re-zipping and to free up space
+            rm -rf "$SUBMODULE_DIR"
+          done
+          
