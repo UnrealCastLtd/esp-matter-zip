@@ -6,15 +6,16 @@ on:
 jobs:
   zip_submodules:
     runs-on: ubuntu-latest
+    timeout-minutes: 360 # Increased timeout for large repos
 
     steps:
-      - name: Configure Git and Checkout Main Repository
+      - name: Checkout Main Repository
         uses: actions/checkout@v4
         with:
-          submodules: false
-          fetch-depth: 0  # Fetch all history to ensure git submodule commands work correctly
+          submodules: false # Do not clone submodules yet
+          fetch-depth: 0 # Fetch all history to list all submodules
 
-      - name: Set up Git credentials
+      - name: Configure Git
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
@@ -26,49 +27,58 @@ jobs:
       - name: Create Zipped-Code directory
         run: mkdir -p Zipped-Code/
 
-      - name: Recursively Find and Zip Submodules
+      - name: Index and Recursively Zip Submodules
+        id: zip_submodules_step
         run: |
-          # Use 'git submodule status --recursive' to get a list of all submodules
-          # It provides the path and commit hash, which is more reliable than 'git foreach'
+          # Use 'git submodule status --recursive' to get a clean list of all submodule paths.
+          # This command reliably finds all submodules, including nested ones, without cloning them.
           git submodule status --recursive | while read -r line; do
-            # Extract the submodule path from the output
             SUBMODULE_PATH=$(echo "$line" | awk '{print $2}')
             
-            # The path for the zipped file and log will mirror the submodule's path
+            # Construct the target paths for the zip and log files, preserving the folder structure.
             SUBMODULE_ZIP_DIR="Zipped-Code/$(dirname "$SUBMODULE_PATH")"
             SUBMODULE_NAME=$(basename "$SUBMODULE_PATH")
             SUBMODULE_ZIP_NAME="$SUBMODULE_ZIP_DIR/$SUBMODULE_NAME.zip"
             SUBMODULE_LOG_NAME="$SUBMODULE_ZIP_DIR/$SUBMODULE_NAME.log"
-
-            # Check if the zip file already exists in the repo
+            
+            echo "::group::Processing $SUBMODULE_PATH"
+            
+            # Check if the zip file already exists in the main repo to skip re-zipping.
             if git ls-files --error-unmatch --Z "$SUBMODULE_ZIP_NAME" > /dev/null 2>&1; then
               echo "Skipping already existing zip for $SUBMODULE_PATH"
+              echo "::endgroup::"
               continue
             fi
             
-            echo "Processing submodule: $SUBMODULE_PATH"
+            echo "Cloning submodule: $SUBMODULE_PATH"
             
-            # Clone only the specific submodule
+            # Clone only the specific submodule and its nested submodules recursively.
             git submodule update --init --recursive -- "$SUBMODULE_PATH"
             
-            # Change into the submodule directory to perform the zip operation
+            # Change into the submodule's directory to perform the zipping.
             cd "$SUBMODULE_PATH"
             
-            # Create the directory structure for the zip and log files if it doesn't exist
+            echo "Zipping and creating log for $SUBMODULE_PATH"
+            
+            # Create the directory structure for the zip and log files if it doesn't exist.
             mkdir -p "$GITHUB_WORKSPACE/$SUBMODULE_ZIP_DIR"
             
-            # Use 7z to create a split archive (2GB chunks)
+            # Zip the submodule's content, preserving the folder structure inside the zip.
+            # The -v2000m flag creates split archives of 2GB each.
             7z a "$GITHUB_WORKSPACE/$SUBMODULE_ZIP_NAME" . -v2000m -r -x!*/.git* > "$GITHUB_WORKSPACE/$SUBMODULE_LOG_NAME" 2>&1
-
-            # Go back to the root of the repo to commit and push
+            
+            # Move back to the main repository's root to commit and push.
             cd "$GITHUB_WORKSPACE"
             
-            # Commit and push the created zip and log files
+            echo "Committing and pushing files for $SUBMODULE_PATH"
             git add "$SUBMODULE_ZIP_NAME" "$SUBMODULE_LOG_NAME"
             git commit -m "Add zip and log for submodule: $SUBMODULE_PATH"
             git push
-
-            # Clean up the temporary cloned submodule directory to save space
+            
+            echo "Cleaning up local files for $SUBMODULE_PATH"
+            
+            # Delete the temporary cloned submodule to free up disk space.
             rm -rf "$SUBMODULE_PATH"
+            
+            echo "::endgroup::"
           done
-          
