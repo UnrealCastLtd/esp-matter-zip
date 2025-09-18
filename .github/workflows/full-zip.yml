@@ -1,4 +1,4 @@
-name: Zip Submodules Sequentially
+name: Zip Submodules Sequentially (Two-Pass)
 
 on:
   workflow_dispatch:
@@ -13,7 +13,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: false # Do not clone submodules yet
-          fetch-depth: 0 # Fetch all history to list all submodules
+          fetch-depth: 0    # Fetch all history to list all submodules
 
       - name: Configure Git
         run: |
@@ -27,11 +27,19 @@ jobs:
       - name: Create Zipped-Code directory
         run: mkdir -p Zipped-Code/
 
-      - name: Recursively Find, Clone, Zip, and Push Submodules
+      - name: Index All Submodules
+        id: index_submodules
         run: |
-          # Use 'git submodule status --recursive' to get a clean list of all submodule paths
-          git submodule status --recursive | while read -r line; do
+          # Use 'git submodule status --recursive' to index all submodule paths.
+          # This is the "indexing" step, which is fast and uses no disk space.
+          git submodule status --recursive > submodules_list.txt
+
+      - name: Process, Zip, and Push Each Submodule
+        run: |
+          # Read the list of submodule paths from the file and process each one sequentially.
+          while read -r line; do
             SUBMODULE_PATH=$(echo "$line" | awk '{print $2}')
+            
             SUBMODULE_ZIP_DIR="Zipped-Code/$(dirname "$SUBMODULE_PATH")"
             SUBMODULE_NAME=$(basename "$SUBMODULE_PATH")
             SUBMODULE_ZIP_NAME="$SUBMODULE_ZIP_DIR/$SUBMODULE_NAME.zip"
@@ -39,7 +47,7 @@ jobs:
             
             echo "::group::Processing $SUBMODULE_PATH"
             
-            # Check if the zip file already exists in the main repo to skip re-zipping.
+            # Check if the zip file already exists in the main repo.
             if git ls-files --error-unmatch --Z "$SUBMODULE_ZIP_NAME" > /dev/null 2>&1; then
               echo "Skipping already existing zip for $SUBMODULE_PATH"
               echo "::endgroup::"
@@ -48,32 +56,24 @@ jobs:
             
             echo "Cloning submodule: $SUBMODULE_PATH"
             
-            # Clone only the specific submodule, but not its submodules.
+            # Clone only the specific submodule, but not recursively.
             git submodule update --init -- "$SUBMODULE_PATH"
-
-            # Check for nested submodules and clone them individually within the same loop.
-            if [ -f "$SUBMODULE_PATH/.gitmodules" ]; then
-              echo "Handling nested submodules within $SUBMODULE_PATH"
-              cd "$SUBMODULE_PATH"
-              git submodule status --recursive | while read -r nested_line; do
-                NESTED_PATH=$(echo "$nested_line" | awk '{print $2}')
-                git submodule update --init --recursive -- "$NESTED_PATH"
-              done
-              cd "$GITHUB_WORKSPACE"
-            fi
             
-            # Change into the submodule's directory to perform the zipping.
-            cd "$SUBMODULE_PATH"
+            # This is the crucial part: we are now guaranteed that only this submodule
+            # is cloned, and we can proceed to zip it.
             
             echo "Zipping and creating log for $SUBMODULE_PATH"
             
             # Create the directory structure for the zip and log files if it doesn't exist.
             mkdir -p "$GITHUB_WORKSPACE/$SUBMODULE_ZIP_DIR"
             
-            # Zip the submodule's content, preserving the folder structure inside the zip.
+            # Change into the submodule's directory to perform the zipping.
+            cd "$SUBMODULE_PATH"
+            
+            # Zip the submodule's content.
             7z a "$GITHUB_WORKSPACE/$SUBMODULE_ZIP_NAME" . -v2000m -r -x!*/.git* > "$GITHUB_WORKSPACE/$SUBMODULE_LOG_NAME" 2>&1
             
-            # Move back to the main repository's root to commit and push.
+            # Move back to the main repository's root.
             cd "$GITHUB_WORKSPACE"
             
             echo "Committing and pushing files for $SUBMODULE_PATH"
@@ -87,5 +87,5 @@ jobs:
             rm -rf "$SUBMODULE_PATH"
             
             echo "::endgroup::"
-          done
+          done < submodules_list.txt
           
