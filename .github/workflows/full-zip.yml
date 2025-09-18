@@ -1,4 +1,4 @@
-name: Recursive Submodule Zips (Clone & Zip One-by-One)
+name: Recursive Submodule Zips and Push to Repo
 
 on:
   workflow_dispatch:
@@ -9,17 +9,25 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      # Step 1: Install dependencies
+      # Step 1: Checkout main repo with token to allow push
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+          submodules: false
+
+      # Step 2: Install dependencies
       - name: Install zip and git
         run: sudo apt update && sudo apt install -y zip git
 
-      # Step 2: Recursive clone + zip script
-      - name: Clone and zip submodules one by one
+      # Step 3: Recursive clone + zip + push script
+      - name: Recursive zip and push
         run: |
           set -e
-          OUTPUT_DIR="recursive_zips"
           ZIP_SIZE_LIMIT="2g"
-          mkdir -p "$OUTPUT_DIR"
+          ZIP_FOLDER="Zipped-Code"
+          mkdir -p "$ZIP_FOLDER"
 
           zip_submodule() {
               local url="$1"
@@ -27,17 +35,29 @@ jobs:
               local parent="$3"
               local out_folder="$parent/$name"
 
-              # Ensure full output folder exists
+              # Ensure output folder exists
               mkdir -p "$out_folder"
 
-              # Safe temp folder name
-              local temp_dir="temp_clone_$(echo "$name" | tr '/' '_')"
+              # Prepare zip path in repo
+              zip_path="$ZIP_FOLDER/$out_folder/$name.zip"
+              log_path="$ZIP_FOLDER/$out_folder/$name.log"
+
+              # Skip if zip already exists
+              if [ -f "$zip_path" ]; then
+                  echo "⏭ Zip already exists: $zip_path, skipping."
+                  return
+              fi
+
+              mkdir -p "$(dirname "$zip_path")"
+
+              # Safe temp folder
+              temp_dir="temp_clone_$(echo "$name" | tr '/' '_')"
 
               echo "📦 Cloning $url -> $name"
               git clone --depth 1 "$url" "$temp_dir"
               cd "$temp_dir"
 
-              # Nested submodules in this repo
+              # Find nested submodules
               if [ -f ".gitmodules" ]; then
                   nested_submodules=$(git config --file .gitmodules --get-regexp path | awk '{print $2}')
               else
@@ -50,35 +70,29 @@ jobs:
                   exclude="$exclude --exclude=$sm/*"
               done
 
-              # Prepare paths
-              zip_path="../$out_folder/$name.zip"
-              log_path="../$out_folder/$name.log"
-              mkdir -p "$(dirname "$zip_path")"
-
               # Zip current module
-              zip -r -s $ZIP_SIZE_LIMIT "$zip_path" . $exclude > "$log_path" 2>&1 && \
-                echo "✅ Zipped $name" || echo "❌ Failed $name, see $log_path"
+              zip -r -s $ZIP_SIZE_LIMIT "../../$zip_path" . $exclude > "../../$log_path" 2>&1 && \
+                  echo "✅ Zipped $name" || echo "❌ Failed $name, see ../../$log_path"
 
-              # Recursively process nested submodules
+              cd ..
+              rm -rf "$temp_dir"
+
+              # Commit and push zip immediately
+              git config user.name "github-actions"
+              git config user.email "actions@github.com"
+              git add "$zip_path" "$log_path"
+              git commit -m "Add zip for $name" || echo "No changes to commit"
+              git push origin main || echo "Push failed (possibly large file)"
+
+              # Recurse into nested submodules
               for sm in $nested_submodules; do
-                  sm_url=$(git config --file .gitmodules --get "submodule.$sm.url" || true)
+                  sm_url=$(git config --file "$temp_dir/.gitmodules" --get "submodule.$sm.url" || true)
                   if [ -n "$sm_url" ]; then
                       zip_submodule "$sm_url" "$sm" "$out_folder"
                   fi
               done
-
-              # Cleanup temp folder
-              cd ..
-              rm -rf "$temp_dir"
           }
 
           # --- Start from your fork ---
           MAIN_REPO_URL="https://github.com/UnrealCastLtd/esp-matter-zip.git"
-          zip_submodule "$MAIN_REPO_URL" "esp-matter" "$OUTPUT_DIR"
-
-      # Step 3: Upload all zips as artifacts
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: recursive-submodule-zips
-          path: recursive_zips
+          zip_submodule "$MAIN_REPO_URL" "esp-matter" "."
