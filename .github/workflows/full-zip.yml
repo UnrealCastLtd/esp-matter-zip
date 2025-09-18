@@ -1,4 +1,4 @@
-name: Build Zips Per Submodule
+name: Build Split Zips Per Submodule
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 360  # allow up to 6 hours
 
     steps:
       - name: Checkout repo with submodules
@@ -20,20 +20,21 @@ jobs:
         run: |
           find . -name ".git" -type d -prune -exec rm -rf {} +
 
-      - name: Create zips for each submodule
+      - name: Create submodule zips with 2GB split
         run: |
-          mkdir submodule_zips
+          mkdir -p submodule_zips
           while read path; do
             name=$(basename "$path")
-            echo "📦 Zipping submodule: $name ($path)"
-            if zip -r "submodule_zips/${name}.zip" "$path" > "submodule_zips/${name}.log" 2>&1; then
+            echo "📦 Processing submodule: $name ($path)"
+            # create zip with 2GB split parts
+            if zip -r -s 2g "submodule_zips/${name}.zip" "$path" > "submodule_zips/${name}.log" 2>&1; then
               echo "✅ Successfully zipped $name"
             else
               echo "❌ Failed to zip $name, check submodule_zips/${name}.log"
             fi
           done < <(git config --file .gitmodules --get-regexp path | awk '{print $2}')
 
-      - name: Upload artifacts
+      - name: Upload zip parts and logs
         uses: actions/upload-artifact@v4
         with:
           name: esp-matter-submodules
