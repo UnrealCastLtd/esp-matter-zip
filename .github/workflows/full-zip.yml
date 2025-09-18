@@ -1,4 +1,4 @@
-name: Recursive Submodule Zips
+name: Recursive Submodule Zips With Named Zips
 
 on:
   workflow_dispatch:
@@ -9,14 +9,14 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      # Step 1: Checkout repo recursively
+      # Step 1: Checkout repository with submodules
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
 
-      # Step 2: Install zip if missing
+      # Step 2: Install zip
       - name: Install zip
         run: sudo apt update && sudo apt install -y zip
 
@@ -24,54 +24,55 @@ jobs:
       - name: Remove .git folders
         run: find . -name ".git" -type d -prune -exec rm -rf {} +
 
-      # Step 4: Recursive zip script
-      - name: Create recursive zips
+      # Step 4: Recursive zip script with named zips
+      - name: Recursive zip-on-discovery with named zips
         run: |
           set -e
           OUTPUT_DIR="recursive_zips"
           ZIP_SIZE_LIMIT="2g"
           mkdir -p "$OUTPUT_DIR"
 
-          zip_submodule() {
-              local path="$1"
-              local dest="$2"
-              local name
-              name=$(basename "$path")
-              local folder="$dest/$name"
+          zip_on_discovery() {
+              local current_path="$1"
+              local parent_output="$2"
+              local folder_name
+              folder_name=$(basename "$current_path")
+              local output_folder="$parent_output/$folder_name"
 
-              echo "📦 Processing: $name ($path) -> $folder"
-              mkdir -p "$folder"
+              echo "📦 Processing folder: $folder_name ($current_path) -> $output_folder"
+              mkdir -p "$output_folder"
 
-              # Get submodule paths
-              if [ -f "$path/.gitmodules" ]; then
-                  submodule_paths=$(git config --file "$path/.gitmodules" --get-regexp path | awk '{print $2}')
-              else
-                  submodule_paths=""
+              # Detect submodules in this folder
+              local submodules=""
+              if [ -f "$current_path/.gitmodules" ]; then
+                  submodules=$(git config --file "$current_path/.gitmodules" --get-regexp path | awk '{print $2}')
               fi
 
-              # Exclude submodules from main zip
-              exclude=""
-              for sm in $submodule_paths; do
+              # Exclude submodule folders from main zip
+              local exclude=""
+              for sm in $submodules; do
                   exclude="$exclude --exclude=$sm/*"
               done
 
-              # Zip current folder (excluding submodules) with split
-              zip -r -s $ZIP_SIZE_LIMIT "$folder/main.zip" "$path" $exclude > "$folder/main.log" 2>&1 && \
-                  echo "✅ Zipped $name" || echo "❌ Failed $name, see $folder/main.log"
+              # Zip current folder excluding submodules with zip named after folder
+              zip_file="$output_folder/${folder_name}.zip"
+              zip -r -s $ZIP_SIZE_LIMIT "$zip_file" "$current_path" $exclude > "$output_folder/${folder_name}.log" 2>&1 && \
+                  echo "✅ Zipped $folder_name" || echo "❌ Failed $folder_name, see $output_folder/${folder_name}.log"
 
-              # Recursively zip submodules
-              for sm in $submodule_paths; do
-                  if [ -d "$path/$sm" ]; then
-                      zip_submodule "$path/$sm" "$folder"
+              # Immediately process each submodule recursively
+              for sm in $submodules; do
+                  local sm_path="$current_path/$sm"
+                  if [ -d "$sm_path" ]; then
+                      zip_on_discovery "$sm_path" "$output_folder"
                   fi
               done
           }
 
-          # Start from repo root
-          zip_submodule "." "$OUTPUT_DIR"
+          # Start at repo root
+          zip_on_discovery "." "$OUTPUT_DIR"
 
       # Step 5: Upload all zips as artifacts
-      - name: Upload zips
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: recursive-submodule-zips
