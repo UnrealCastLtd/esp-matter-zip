@@ -16,7 +16,7 @@ jobs:
           fetch-depth: 0
           submodules: false
 
-      - name: Install zip and git
+      - name: Install dependencies
         run: sudo apt update && sudo apt install -y zip git
 
       - name: Recursive zip and push
@@ -31,63 +31,56 @@ jobs:
               local url="$1"
               local name="$2"
               local parent="$3"
-              local out_folder="$parent/$name"
 
-              # Full path for zip/log in repo
-              zip_path="$REPO_ROOT/$ZIP_FOLDER/$out_folder/$name.zip"
-              log_path="$REPO_ROOT/$ZIP_FOLDER/$out_folder/$name.log"
+              local out_folder="$parent/$name"
+              mkdir -p "$ZIP_FOLDER/$out_folder"
+
+              local zip_path="$REPO_ROOT/$ZIP_FOLDER/$out_folder/$name.zip"
+              local log_path="$REPO_ROOT/$ZIP_FOLDER/$out_folder/$name.log"
 
               # Skip if zip already exists
               if [ -f "$zip_path" ]; then
-                  echo "⏭ Zip already exists: $zip_path, skipping."
+                  echo "⏭ $zip_path exists, skipping."
                   return
               fi
 
-              # Make sure the folder exists
-              mkdir -p "$(dirname "$zip_path")"
-
-              # Safe temp folder
-              temp_dir="temp_clone_$(echo "$name" | tr '/' '_')"
+              # Safe temp folder name
+              local temp_dir="temp_clone_$(echo "$name" | tr '/' '_')"
 
               echo "📦 Cloning $url -> $name"
-              git clone --depth 1 "$url" "$temp_dir"
-              cd "$temp_dir"
+              git clone --depth 1 --recurse-submodules "$url" "$temp_dir"
 
-              # Nested submodules
-              if [ -f ".gitmodules" ]; then
-                  nested_submodules=$(git config --file .gitmodules --get-regexp path | awk '{print $2}')
-              else
-                  nested_submodules=""
-              fi
-
-              # Exclude nested submodules from zip
+              # Exclude nested submodules from current zip
               exclude=""
-              for sm in $nested_submodules; do
-                  exclude="$exclude --exclude=$sm/*"
+              for sm in $(find "$temp_dir" -maxdepth 1 -type d -name "*"); do
+                  if [ -d "$sm/.git" ] && [ "$sm" != "$temp_dir" ]; then
+                      exclude="$exclude --exclude=$(basename "$sm")/*"
+                  fi
               done
 
               # Zip current module
-              zip -r -s $ZIP_SIZE_LIMIT "$zip_path" . $exclude > "$log_path" 2>&1 && \
+              zip -r -s $ZIP_SIZE_LIMIT "$zip_path" "$temp_dir" $exclude > "$log_path" 2>&1 && \
                   echo "✅ Zipped $name" || echo "❌ Failed $name, see $log_path"
 
-              cd ..
-              rm -rf "$temp_dir"
-
-              # Commit and push immediately
+              # Commit & push
               git config user.name "github-actions"
               git config user.email "actions@github.com"
               git add "$ZIP_FOLDER/$out_folder/$name.zip" "$ZIP_FOLDER/$out_folder/$name.log"
               git commit -m "Add zip for $name" || echo "No changes to commit"
               git push origin main || echo "Push failed (possibly large file)"
 
-              # Recurse into nested submodules
-              for sm in $nested_submodules; do
-                  sm_url=$(git config --file "$temp_dir/.gitmodules" --get "submodule.$sm.url" || true)
-                  if [ -n "$sm_url" ]; then
-                      zip_submodule "$sm_url" "$sm" "$out_folder"
+              # Recurse into actual submodule directories
+              for sm in $(find "$temp_dir" -maxdepth 1 -type d -name "*"); do
+                  if [ -d "$sm/.git" ] && [ "$sm" != "$temp_dir" ]; then
+                      sm_name=$(basename "$sm")
+                      sm_url=$(git -C "$sm" config --get remote.origin.url)
+                      zip_submodule "$sm_url" "$sm_name" "$out_folder"
                   fi
               done
+
+              rm -rf "$temp_dir"
           }
 
+          # --- Start from your fork ---
           MAIN_REPO_URL="https://github.com/UnrealCastLtd/esp-matter-zip.git"
           zip_submodule "$MAIN_REPO_URL" "esp-matter" "."
