@@ -26,32 +26,38 @@ jobs:
               local name="$2"
               local parent="$3"
               local out_folder="$parent/$name"
+
+              # Ensure full output folder exists
               mkdir -p "$out_folder"
 
-              local temp_dir="temp_clone_$name"
+              # Safe temp folder name
+              local temp_dir="temp_clone_$(echo "$name" | tr '/' '_')"
 
               echo "📦 Cloning $url -> $name"
               git clone --depth 1 "$url" "$temp_dir"
               cd "$temp_dir"
 
-              # Find nested submodules in this repo
+              # Nested submodules in this repo
               if [ -f ".gitmodules" ]; then
                   nested_submodules=$(git config --file .gitmodules --get-regexp path | awk '{print $2}')
               else
                   nested_submodules=""
               fi
 
-              # Zip the current repo (excluding nested submodules)
+              # Exclude nested submodules from current zip
               exclude=""
               for sm in $nested_submodules; do
                   exclude="$exclude --exclude=$sm/*"
               done
 
-              zip_file="../$out_folder/$name.zip"
-              log_file="../$out_folder/$name.log"
+              # Prepare paths
+              zip_path="../$out_folder/$name.zip"
+              log_path="../$out_folder/$name.log"
+              mkdir -p "$(dirname "$zip_path")"
 
-              zip -r -s $ZIP_SIZE_LIMIT "$zip_file" . $exclude > "$log_file" 2>&1 && \
-                echo "✅ Zipped $name" || echo "❌ Failed $name, see $log_file"
+              # Zip current module
+              zip -r -s $ZIP_SIZE_LIMIT "$zip_path" . $exclude > "$log_path" 2>&1 && \
+                echo "✅ Zipped $name" || echo "❌ Failed $name, see $log_path"
 
               # Recursively process nested submodules
               for sm in $nested_submodules; do
