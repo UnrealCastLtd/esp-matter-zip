@@ -18,8 +18,8 @@ jobs:
 
       - name: Verify submodules.txt exists
         run: |
-          if [ ! -f "main/Zipped-Code/submodules.txt" ]; then
-            echo "Error: The file main/Zipped-Code/submodules.txt was not found."
+          if [ ! -f "Zipped-Code/submodules.txt" ]; then
+            echo "Error: The file Zipped-Code/submodules.txt was not found."
             exit 1
           fi
 
@@ -27,7 +27,7 @@ jobs:
         id: zip-script
         run: |
           # Create the main directory for zipped files
-          mkdir -p main/Zipped-Code
+          mkdir -p Zipped-Code
 
           # Read the submodules.txt file and process each module
           awk '/^\[submodule ".*"\]/ {
@@ -74,10 +74,10 @@ jobs:
             
             print "Successfully zipped and moved " module_name
             print "---------------------------------------"
-          }' main/Zipped-Code/submodules.txt
+          }' Zipped-Code/submodules.txt
 
       - name: Upload Zipped Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: zipped-submodules
-          path: main/Zipped-Code/
+          path: Zipped-Code/
