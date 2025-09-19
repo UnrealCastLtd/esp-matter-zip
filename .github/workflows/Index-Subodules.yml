@@ -31,22 +31,21 @@ jobs:
           : > "$OUTPUT_FILE"
 
           parse_gitmodules() {
-            local base_folder="$1"    # e.g., main/
-            local repo_url="$2"       # submodule URL
-            local commit_sha="$3"     # commit SHA referenced by parent
+            local base_folder="$1"
+            local repo_url="$2"
+            local commit_sha="$3"
 
-            # Only handle GitHub URLs
             if [[ "$repo_url" =~ github.com[:/](.*)/(.*)(.git)?$ ]]; then
               owner="${BASH_REMATCH[1]}"
               repo="${BASH_REMATCH[2]}"
-              repo="${repo%.git}"  # remove .git
+              repo="${repo%.git}"
               gitmodules_url="https://raw.githubusercontent.com/$owner/$repo/$commit_sha/.gitmodules"
 
               tmp_file=$(mktemp)
+              # Silently skip if .gitmodules doesn't exist
               if curl -sfL "$gitmodules_url" -o "$tmp_file"; then
                 echo "🔍 Found .gitmodules in $repo_url @$commit_sha"
 
-                # Read .gitmodules and parse each submodule block
                 awk -v folder="$base_folder" '
                   BEGIN {block=""; path=""; url=""; branch=""}
                   /^\[submodule/ { block=$0; next }
@@ -74,13 +73,11 @@ jobs:
                 done
 
                 rm "$tmp_file"
-              else
-                # echo "⚠️ No .gitmodules found at $gitmodules_url"
               fi
             fi
           }
 
-          # Start from the main repo
+          # Start from main repo
           if [ -f ".gitmodules" ]; then
             echo "🔍 Parsing main .gitmodules"
             commit_sha=$(git rev-parse HEAD)
@@ -91,9 +88,8 @@ jobs:
 
           echo "📋 Recursive submodules index saved to $OUTPUT_FILE"
 
-      - name: Commit and Push submodules.txt
-        if: always()
+      - name: Commit and Force Push submodules.txt
         run: |
           git add Zipped-Code/submodules.txt
           git commit -m "Update recursive submodules index" || echo "No changes to commit"
-          git push
+          git push origin main --force
