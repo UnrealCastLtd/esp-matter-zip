@@ -8,10 +8,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout Repository (with submodules)
         uses: actions/checkout@v4
         with:
-          submodules: false
+          submodules: recursive   # <-- fetch all submodules
           fetch-depth: 0
 
       - name: Configure Git
@@ -31,10 +31,8 @@ jobs:
             local commit=$1
             local prefix=$2
 
-            # Find all entries with mode 160000 (submodules)
             git ls-tree "$commit" | awk '/160000/ {print $4, $3}' | while read path subcommit; do
               echo "${prefix}${path}"
-              # Recurse into this submodule commit
               list_submodules_recursive "$subcommit" "${prefix}${path}/"
             done
           }
@@ -42,7 +40,7 @@ jobs:
           # Start recursion from HEAD
           list_submodules_recursive HEAD "" > submodules-new.txt
 
-          # Compare with the existing file
+          # Compare with previous version
           if [ -f Zipped-Code/submodules.txt ]; then
             if cmp -s submodules-new.txt Zipped-Code/submodules.txt; then
               echo "No changes in submodules list. Skipping commit."
@@ -58,13 +56,11 @@ jobs:
             echo "changes_detected=true" >> $GITHUB_OUTPUT
           fi
 
-          # Clean up temporary file
           rm -f submodules-new.txt
 
       - name: Commit and Push submodules.txt
         if: steps.generate_index.outputs.changes_detected == 'true'
         run: |
           git add Zipped-Code/submodules.txt
-          git commit -m "Update submodules index file (recursive, bypassing .gitmodules)"
+          git commit -m "Update submodules index file (recursive)"
           git push
-          echo "Successfully updated submodules.txt and pushed changes."
