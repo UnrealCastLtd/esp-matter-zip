@@ -75,7 +75,7 @@ jobs:
 
                 rm "$tmp_file"
               else
-                echo "⚠️ No .gitmodules found at $gitmodules_url"
+                # echo "⚠️ No .gitmodules found at $gitmodules_url"
               fi
             fi
           }
