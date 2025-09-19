@@ -30,51 +30,51 @@ jobs:
           mkdir -p Zipped-Code
 
           # Read the submodules.txt file and process each module
-          awk '/^\[submodule ".*"\]/ {
-            module_name = $2
-            sub(/["\[\]]/,"",module_name)
-            
-            getline; sub(/^[ \t]*path[ \t]*=[ \t]*/,""); path = $0
-            
-            getline; sub(/^[ \t]*url[ \t]*=[ \t]*/,""); url = $0
-            
-            # Check for optional branch line
-            if (url ~ /branch/) {
-              branch = url
-              sub(/^[ \t]*branch[ \t]*=[ \t]*/,"",branch)
-              getline; sub(/^[ \t]*Folder[ \t]*=[ \t]*/,""); folder = $0
-              url = url_prev
-              url_prev = ""
-            } else {
-              folder = url
-              sub(/^[ \t]*Folder[ \t]*=[ \t]*/,"",folder)
-            }
-            url_prev = url
+          while IFS= read -r line; do
+            if [[ "$line" =~ \[submodule\ \"(.*)\"\] ]]; then
+              module_name="${BASH_REMATCH[1]}"
+              
+              # Read the next lines to get path, url, and folder
+              read -r path_line
+              path=$(echo "$path_line" | sed -e 's/^[[:space:]]*path[[:space:]]*=[[:space:]]*//')
+              read -r url_line
+              url=$(echo "$url_line" | sed -e 's/^[[:space:]]*url[[:space:]]*=[[:space:]]*//')
 
-            # Output processing info
-            print "Processing submodule: " module_name
-            print "URL: " url
-            print "Destination Folder: " folder
-            
-            # 1. Clone the module into a temporary directory
-            temp_dir="temp_clone"
-            system("git clone --depth 1 " url " " temp_dir)
-            
-            # 2. Zip the contents of the cloned directory
-            system("zip -r \"" module_name ".zip\" " temp_dir " -x \"*.git*\"")
-            
-            # 3. Create the destination folder if it doesn't exist
-            system("mkdir -p \"" folder "\"")
-            
-            # 4. Move the zipped file to the destination folder
-            system("mv \"" module_name ".zip\" \"" folder "\"")
-            
-            # 5. Clean up the temporary directory to save space
-            system("rm -rf " temp_dir)
-            
-            print "Successfully zipped and moved " module_name
-            print "---------------------------------------"
-          }' Zipped-Code/submodules.txt
+              # Handle optional 'branch' line
+              read -r folder_or_branch_line
+              if [[ "$folder_or_branch_line" =~ "branch" ]]; then
+                read -r folder_line
+                folder=$(echo "$folder_line" | sed -e 's/^[[:space:]]*Folder[[:space:]]*=[[:space:]]*//')
+              else
+                folder=$(echo "$folder_or_branch_line" | sed -e 's/^[[:space:]]*Folder[[:space:]]*=[[:space:]]*//')
+              fi
+
+              echo "Processing submodule: $module_name"
+              echo "Path: $path"
+              echo "URL: $url"
+              echo "Destination Folder: $folder"
+
+              # 1. Clone the module into a temporary directory
+              temp_dir="temp_clone"
+              git clone --depth 1 "$url" "$temp_dir"
+
+              # 2. Zip the contents of the cloned directory
+              # Exclude the .git folder to save space
+              zip -r "${module_name}.zip" "$temp_dir" -x "*.git*"
+
+              # 3. Create the destination folder if it doesn't exist
+              mkdir -p "$folder"
+
+              # 4. Move the zipped file to the destination folder
+              mv "${module_name}.zip" "$folder"
+
+              # 5. Clean up the temporary directory to save space
+              rm -rf "$temp_dir"
+
+              echo "Successfully zipped and moved $module_name"
+              echo "---------------------------------------"
+            fi
+          done < Zipped-Code/submodules.txt
 
       - name: Upload Zipped Artifacts
         uses: actions/upload-artifact@v4
