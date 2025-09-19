@@ -47,15 +47,20 @@ jobs:
             echo "    Folder: $folder"
 
             rm -rf "$TEMP_FOLDER"
-            mkdir -p "$TEMP_FOLDER"
 
             # Clone shallow
             git clone --depth 1 --branch "$branch" "$url" "$TEMP_FOLDER"
 
-            # Zip the contents (no extra folder inside zip)
+            # Decide destination path
             zip_name=$(basename "$folder").zip
-            echo "    Creating: $DEST_FOLDER/$zip_name"
-            (cd "$TEMP_FOLDER" && zip -r "../../$DEST_FOLDER/$zip_name" . -x "*.git*" > /dev/null)
+            dest_path="$DEST_FOLDER/$folder/$zip_name"
+
+            echo "    Creating: $dest_path"
+            mkdir -p "$(dirname "$dest_path")"
+
+            # Zip repo contents (flat, no extra folder, no .git)
+            (cd "$TEMP_FOLDER" && zip -r "$GITHUB_WORKSPACE/$dest_path" . -x "*.git*" > /dev/null)
 
             rm -rf "$TEMP_FOLDER"
+            echo "    ✅ Done"
           done
