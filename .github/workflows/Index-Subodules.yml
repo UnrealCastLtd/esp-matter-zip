@@ -14,7 +14,7 @@ jobs:
           fetch-depth: 1
           submodules: false
 
-      - name: List all submodules recursively
+      - name: Recursively list submodules without cloning
         run: |
           set -euo pipefail
 
@@ -25,18 +25,41 @@ jobs:
             if [ -f "$repo_path/.gitmodules" ]; then
               echo "🔍 Found .gitmodules in $repo_path"
 
-              # Extract submodule paths from .gitmodules
+              # Extract paths from .gitmodules
               grep "path =" "$repo_path/.gitmodules" | awk '{print $3}' | while read -r sub_path; do
                 local full_path="$prefix$sub_path"
                 echo "$full_path"
 
-                # Initialize this submodule only
-                git submodule update --init --depth 1 -- "$sub_path"
-
-                # Recurse into this submodule
-                list_submodules "$sub_path" "$full_path/"
+                # If the submodule contains its own .gitmodules file in the repo,
+                # read it directly from Git (without checking out)
+                if git show HEAD:"$sub_path/.gitmodules" > /dev/null 2>&1; then
+                  # Create a temp file to hold its .gitmodules
+                  tmp_file=$(mktemp)
+                  git show HEAD:"$sub_path/.gitmodules" > "$tmp_file"
+                  
+                  # Recurse by parsing the temp file
+                  list_embedded "$tmp_file" "$full_path/"
+                  rm "$tmp_file"
+                fi
               done
             fi
+          }
+
+          list_embedded() {
+            local gitmodules_file="$1"
+            local prefix="$2"
+
+            grep "path =" "$gitmodules_file" | awk '{print $3}' | while read -r sub_path; do
+              local full_path="$prefix$sub_path"
+              echo "$full_path"
+
+              if git show HEAD:"$prefix$sub_path/.gitmodules" > /dev/null 2>&1; then
+                tmp_file=$(mktemp)
+                git show HEAD:"$prefix$sub_path/.gitmodules" > "$tmp_file"
+                list_embedded "$tmp_file" "$full_path/"
+                rm "$tmp_file"
+              fi
+            done
           }
 
           echo "📋 Listing all submodules:"
