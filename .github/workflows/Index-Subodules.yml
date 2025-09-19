@@ -1,4 +1,4 @@
-name: Index All Submodules Recursively
+name: Index All Submodules Recursively (Layer by Layer)
 
 on:
   workflow_dispatch:
@@ -8,10 +8,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository (with submodules)
+      - name: Checkout Repository (no submodules)
         uses: actions/checkout@v4
         with:
-          submodules: recursive   # <-- fetch all submodules
+          submodules: false
           fetch-depth: 0
 
       - name: Configure Git
@@ -26,41 +26,61 @@ jobs:
       - name: Generate and Compare Submodules Index
         id: generate_index
         run: |
-          # Recursive function to list submodules inside a commit tree
-          list_submodules_recursive() {
-            local commit=$1
-            local prefix=$2
+          set -euo pipefail
 
-            git ls-tree "$commit" | awk '/160000/ {print $4, $3}' | while read path subcommit; do
-              echo "${prefix}${path}"
-              list_submodules_recursive "$subcommit" "${prefix}${path}/"
+          # Function: recursively discover submodules
+          discover_submodules() {
+            local repo_url=$1
+            local commit=$2
+            local prefix=$3
+
+            # Clone repo at specific commit, shallow
+            rm -rf tmp_subrepo
+            git clone --depth 1 "$repo_url" tmp_subrepo >/dev/null 2>&1 || return
+            cd tmp_subrepo
+            git fetch --depth 1 origin "$commit" >/dev/null 2>&1 || true
+            git checkout "$commit" >/dev/null 2>&1 || true
+
+            # List submodules in this repo (paths + commit IDs)
+            git ls-tree -r HEAD | awk '/160000/ {print $4, $3}' | while read path subcommit; do
+              echo "${prefix}${path} ${subcommit}" >> ../submodules-new.txt
+
+              # Try to extract submodule URL from .gitmodules if available
+              suburl=$(git config -f .gitmodules --get "submodule.${path}.url" || true)
+              if [ -n "$suburl" ]; then
+                # Recurse into this submodule
+                discover_submodules "$suburl" "$subcommit" "${prefix}${path}/"
+              fi
             done
+
+            cd ..
+            rm -rf tmp_subrepo
           }
 
-          # Start recursion from HEAD
-          list_submodules_recursive HEAD "" > submodules-new.txt
+          # Start with the main repository
+          echo "Discovering submodules..."
+          : > submodules-new.txt
+          discover_submodules "https://github.com/${{ github.repository }}.git" "$(git rev-parse HEAD)" ""
 
-          # Compare with previous version
+          # Compare with existing
           if [ -f Zipped-Code/submodules.txt ]; then
             if cmp -s submodules-new.txt Zipped-Code/submodules.txt; then
               echo "No changes in submodules list. Skipping commit."
               echo "changes_detected=false" >> $GITHUB_OUTPUT
             else
-              echo "Changes detected. Proceeding with commit."
+              echo "Changes detected. Updating index..."
               mv submodules-new.txt Zipped-Code/submodules.txt
               echo "changes_detected=true" >> $GITHUB_OUTPUT
             fi
           else
-            echo "submodules.txt does not exist. Creating and committing new file."
+            echo "Creating new submodules index file."
             mv submodules-new.txt Zipped-Code/submodules.txt
             echo "changes_detected=true" >> $GITHUB_OUTPUT
           fi
-
-          rm -f submodules-new.txt
 
       - name: Commit and Push submodules.txt
         if: steps.generate_index.outputs.changes_detected == 'true'
         run: |
           git add Zipped-Code/submodules.txt
-          git commit -m "Update submodules index file (recursive)"
+          git commit -m "Update recursive submodules index file (layer by layer)"
           git push
