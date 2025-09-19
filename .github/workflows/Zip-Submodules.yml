@@ -83,7 +83,8 @@ jobs:
               mkdir -p "$folder"
 
               # 4. Move and rename the zipped file to the destination folder
-              mv "$temp_zip_file" "$folder/${module_name}.zip"
+              # Use basename to get just the filename from the module path
+              mv "$temp_zip_file" "$folder/$(basename "$module_name").zip"
 
               # 5. Clean up the temporary directory to save space on the runner
               rm -rf "$temp_dir"
