@@ -23,71 +23,74 @@ jobs:
             exit 1
           fi
 
-      - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y zip git
-
       - name: Set up and run script
         run: |
-          set -euo pipefail
+          # Create the main directory for zipped files
           mkdir -p Zipped-Code
 
+          # Read submodules.txt
           while IFS= read -r line; do
             if [[ "$line" =~ \[submodule\ \"(.*)\"\] ]]; then
               module_name="${BASH_REMATCH[1]}"
 
-              # Read subsequent lines for path, url, branch (optional), and Folder
+              # Read path, url, and folder lines
               read -r path_line
               path=$(echo "$path_line" | sed -e 's/^[[:space:]]*path[[:space:]]*=[[:space:]]*//')
-              
               read -r url_line
               url=$(echo "$url_line" | sed -e 's/^[[:space:]]*url[[:space:]]*=[[:space:]]*//')
-              
-              # Check if the next line is branch or Folder
-              read -r next_line
-              if [[ "$next_line" =~ ^[[:space:]]*branch ]]; then
-                branch=$(echo "$next_line" | sed -e 's/^[[:space:]]*branch[[:space:]]*=[[:space:]]*//')
+
+              # Read optional branch and folder lines
+              read -r branch_or_folder_line
+              branch=""
+              if [[ "$branch_or_folder_line" =~ "branch" ]]; then
+                branch=$(echo "$branch_or_folder_line" | sed -e 's/^[[:space:]]*branch[[:space:]]*=[[:space:]]*//')
                 read -r folder_line
+                folder=$(echo "$folder_line" | sed -e 's/^[[:space:]]*Folder[[:space:]]*=[[:space:]]*//')
               else
-                branch=""
-                folder_line="$next_line"
+                folder=$(echo "$branch_or_folder_line" | sed -e 's/^[[:space:]]*Folder[[:space:]]*=[[:space:]]*//')
               fi
-              folder=$(echo "$folder_line" | sed -e 's/^[[:space:]]*Folder[[:space:]]*=[[:space:]]*//')
 
               echo "📦 Processing submodule: $module_name"
               echo "    Path: $path"
               echo "    URL: $url"
-              echo "    Branch: ${branch:-master}"
+              echo "    Branch: ${branch:-default}"
               echo "    Destination Folder: $folder"
 
               temp_dir="temp_clone"
               rm -rf "$temp_dir"
 
-              # Clone the repository (use branch if available)
+              # Clone branch if it exists, otherwise fallback to default branch
               if [ -n "$branch" ]; then
-                git clone --depth 1 --branch "$branch" "$url" "$temp_dir"
+                if git ls-remote --heads "$url" "$branch" | grep -q "$branch"; then
+                  git clone --depth 1 --branch "$branch" "$url" "$temp_dir"
+                else
+                  echo "Warning: Branch '$branch' not found, cloning default branch instead."
+                  git clone --depth 1 "$url" "$temp_dir"
+                fi
               else
                 git clone --depth 1 "$url" "$temp_dir"
               fi
 
+              # Verify clone succeeded
               if [ ! -d "$temp_dir" ]; then
                 echo "Error: git clone failed for $url"
                 exit 1
               fi
 
-              # Prepare the destination folder
+              # Zip the module contents (exclude .git folder)
+              temp_zip_file="temp_zip_file_$(date +%s).zip"
+              zip -r "$temp_zip_file" "$temp_dir" -x "*.git*" > /dev/null
+
+              # Create destination folder
               mkdir -p "$folder"
 
-              # Zip the **contents only**, not the top-level temp directory
-              cd "$temp_dir"
-              zip -r "../temp.zip" . -x "*.git*"
-              cd ..
-              
-              mv temp.zip "$folder/$(basename "$module_name").zip"
+              # Move zip file to destination
+              mv "$temp_zip_file" "$folder/$(basename "$module_name").zip"
 
-              # Clean up temporary directory
+              # Clean up
               rm -rf "$temp_dir"
 
-              echo "✅ Successfully zipped and moved $module_name"
+              echo "✅ Successfully zipped $module_name"
               echo "---------------------------------------"
             fi
           done < Zipped-Code/submodules.txt
