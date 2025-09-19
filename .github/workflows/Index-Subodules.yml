@@ -1,4 +1,4 @@
-name: Index Submodules
+name: Index All Submodules
 
 on:
   workflow_dispatch:
@@ -25,9 +25,13 @@ jobs:
 
       - name: Index All Submodules and Save to File
         run: |
-          # Use 'git submodule status --recursive' to index all submodule paths.
-          # The output is redirected to a file inside the Zipped-Code/ directory.
+          # The --recursive flag is crucial here. It traverses all nested submodules.
           git submodule status --recursive > Zipped-Code/submodules.txt
+          
+          # Optional: Verify the content of the file
+          echo "--- Content of submodules.txt ---"
+          cat Zipped-Code/submodules.txt
+          echo "----------------------------------"
 
       - name: Commit and Push submodules.txt
         run: |
