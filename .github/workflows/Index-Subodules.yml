@@ -1,4 +1,4 @@
-name: Index All Submodules (Fixed)
+name: Index Submodules without .gitmodules
 
 on:
   workflow_dispatch:
@@ -26,10 +26,11 @@ jobs:
       - name: Generate and Compare Submodules Index
         id: generate_index
         run: |
-          # Create a new index file using 'git submodule status' for a full, recursive list.
-          git submodule status --recursive > submodules-new.txt
-          
-          # Check for changes between the old and new list.
+          # Use 'git ls-tree' to find all tree entries marked with mode 160000,
+          # which indicates a submodule. This method bypasses the .gitmodules file.
+          git ls-tree -r HEAD | grep '160000' | awk '{print $4}' > submodules-new.txt
+
+          # Check if the existing file is different from the newly generated one.
           if [ -f Zipped-Code/submodules.txt ]; then
             if cmp -s submodules-new.txt Zipped-Code/submodules.txt; then
               echo "No changes in submodules list. Skipping commit."
@@ -45,12 +46,13 @@ jobs:
             echo "changes_detected=true" >> $GITHUB_OUTPUT
           fi
           
+          # Clean up the temporary file
           rm -f submodules-new.txt
 
       - name: Commit and Push submodules.txt
         if: steps.generate_index.outputs.changes_detected == 'true'
         run: |
           git add Zipped-Code/submodules.txt
-          git commit -m "Update submodules index file"
+          git commit -m "Update submodules index file (bypassing .gitmodules)"
           git push
           echo "Successfully updated submodules.txt and pushed changes."
