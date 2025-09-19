@@ -1,21 +1,52 @@
-- name: Set up and run script
+name: Zip Submodules
+
+on:
+  # This allows you to run the workflow manually from the Actions tab
+  workflow_dispatch:
+  # This triggers the workflow on a push to the main branch
+  push:
+    branches:
+      - main
+
+jobs:
+  zip-and-move:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        # Use actions/checkout to get your repository code
+        uses: actions/checkout@v4
+        with:
+          # Important: We will manually handle submodules one by one, so disable the automatic checkout
+          submodules: false
+
+      - name: Verify submodules.txt exists
+        # This step checks for the existence of the submodule list file
+        run: |
+          if [ ! -f "Zipped-Code/submodules.txt" ]; then
+            echo "Error: The file Zipped-Code/submodules.txt was not found."
+            exit 1
+          fi
+
+      - name: Set up and run script
         id: zip-script
         run: |
           # Create the main directory for zipped files
           mkdir -p Zipped-Code
 
           # Read the submodules.txt file and process each module
+          # The while loop reads each line from the file and looks for submodule definitions
           while IFS= read -r line; do
             if [[ "$line" =~ \[submodule\ \"(.*)\"\] ]]; then
               module_name="${BASH_REMATCH[1]}"
               
-              # Read the next lines to get path, url, and folder
+              # Read the next lines to get the path, url, and folder
               read -r path_line
               path=$(echo "$path_line" | sed -e 's/^[[:space:]]*path[[:space:]]*=[[:space:]]*//')
               read -r url_line
               url=$(echo "$url_line" | sed -e 's/^[[:space:]]*url[[:space:]]*=[[:space:]]*//')
 
-              # Handle optional 'branch' line
+              # Handle the optional 'branch' line
               read -r folder_or_branch_line
               if [[ "$folder_or_branch_line" =~ "branch" ]]; then
                 read -r folder_line
@@ -31,10 +62,11 @@
 
               # 1. Clone the module into a temporary directory
               temp_dir="temp_clone"
-              rm -rf "$temp_dir" # Clean up temp dir before cloning
+              # Important: Clean up the temp directory from a previous run before cloning
+              rm -rf "$temp_dir" 
               git clone --depth 1 "$url" "$temp_dir"
 
-              # Check if the clone was successful
+              # Check if the git clone was successful; exit if it failed
               if [ ! -d "$temp_dir" ]; then
                 echo "Error: git clone failed for $url"
                 exit 1
@@ -50,10 +82,17 @@
               # 4. Move the zipped file to the destination folder
               mv "${module_name}.zip" "$folder"
 
-              # 5. Clean up the temporary directory to save space
+              # 5. Clean up the temporary directory to save space on the runner
               rm -rf "$temp_dir"
 
               echo "Successfully zipped and moved $module_name"
               echo "---------------------------------------"
             fi
           done < Zipped-Code/submodules.txt
+
+      - name: Upload Zipped Artifacts
+        # This action saves the zipped files as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zipped-submodules
+          path: Zipped-Code/
