@@ -1,4 +1,4 @@
-name: Zip Submodules Individually
+name: Zip Submodules
 
 on:
   workflow_dispatch:
@@ -8,59 +8,62 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v3
         with:
           fetch-depth: 0
-          submodules: false
 
-      - name: Install zip
-        run: sudo apt-get update && sudo apt-get install -y zip git
+      - name: Setup Git
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "github-actions@github.com"
 
-      - name: Prepare output folder
+      - name: Prepare Zipped-Code folder
         run: mkdir -p main/Zipped-Code
 
-      - name: Process submodules.txt and create zips
+      - name: Process Submodules
         run: |
-          set -euo pipefail
+          repos=(
+            "https://github.com/espressif/connectedhomeip.git master connectedhomeip/connectedhomeip"
+            "https://github.com/espressif/libtrustymatter.git main connectedhomeip/connectedhomeip/third_party/libtrustymatter/repo"
+          )
 
-          INPUT_FILE="Zipped-Code/submodules.txt"
-          DEST_FOLDER="$GITHUB_WORKSPACE/main/Zipped-Code"
-          TEMP_FOLDER="temp_submodule"
+          for entry in "${repos[@]}"; do
+            url=$(echo $entry | cut -d' ' -f1)
+            branch=$(echo $entry | cut -d' ' -f2)
+            folder=$(echo $entry | cut -d' ' -f3)
 
-          awk '
-            BEGIN {url=""; branch="master"; folder=""}
-            /^\[submodule/ { if (url != "" && folder != "") {
-                               print url "|" branch "|" folder
-                             }
-                             url=""; branch="master"; folder="" }
-            /url =/    {url=$3}
-            /branch =/ {branch=$3}
-            /Folder =/ {folder=$3}
-            END { if (url != "" && folder != "") {
-                    print url "|" branch "|" folder
-                  } }
-          ' "$INPUT_FILE" | while IFS="|" read -r url branch folder; do
             echo "📦 Processing:"
             echo "    URL: $url"
             echo "    Branch: $branch"
             echo "    Folder: $folder"
 
-            rm -rf "$TEMP_FOLDER"
+            # temp folder for VM work
+            temp_folder="temp_submodule"
+            rm -rf "$temp_folder"
 
-            # Clone shallow without submodules
-            git clone --depth 1 --no-recurse-submodules --branch "$branch" "$url" "$TEMP_FOLDER"
+            # clone repo
+            git clone --branch "$branch" --depth 1 "$url" "$temp_folder"
 
-            # Zip name = last folder only
-            zip_name="$(basename "$folder").zip"
-            dest_path="$DEST_FOLDER/$zip_name"
+            # make sure parent folder exists in repo
+            mkdir -p "main/Zipped-Code"
 
-            echo "    Creating: $dest_path"
-            mkdir -p "$(dirname "$dest_path")"
+            # zip it
+            zip_name=$(basename "$folder").zip
+            echo "    Creating: main/Zipped-Code/$zip_name"
+            (cd "$temp_folder" && zip -r "../$zip_name" .)
 
-            # Zip repo contents (flat, no extra folder, skip .git)
-            (cd "$TEMP_FOLDER" && zip -rq "$dest_path" . -x "*.git*")
+            # move zip to destination
+            mv "$zip_name" "main/Zipped-Code/$zip_name"
 
-            rm -rf "$TEMP_FOLDER"
-            echo "    ✅ Done: $zip_name"
+            # cleanup temp
+            rm -rf "$temp_folder"
           done
+
+      - name: Commit and Push
+        run: |
+          cd main/Zipped-Code
+          git add .
+          cd ../..
+          git commit -m "Add zipped submodules" || echo "No changes to commit"
+          git push
