@@ -1,8 +1,3 @@
-[submodule "connectedhomeip/connectedhomeip"]
-	path = connectedhomeip/connectedhomeip
-	url = https://github.com/espressif/connectedhomeip.git
-	Folder = main/connectedhomeip/connectedhomeip
-
 [submodule "third_party/libtrustymatter/repo"]
 	path = third_party/libtrustymatter/repo
 	url = https://github.com/nxp-imx/libtrustymatter
@@ -13,6 +8,11 @@
 	path = framework
 	url = https://github.com/Mbed-TLS/mbedtls-framework
 	Folder = main/connectedhomeip/connectedhomeip/third_party/nlassert/repo/framework
+
+[submodule "connectedhomeip/connectedhomeip"]
+	path = connectedhomeip/connectedhomeip
+	url = https://github.com/espressif/connectedhomeip.git
+	Folder = main/connectedhomeip/connectedhomeip
 
 [submodule "third_party/cpp-httplib/repo"]
 	path = third_party/cpp-httplib/repo
