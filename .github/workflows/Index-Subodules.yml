@@ -14,6 +14,11 @@ jobs:
           fetch-depth: 1
           submodules: false
 
+      - name: Configure Git identity
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
       - name: Create output folder
         run: mkdir -p Zipped-Code
 
@@ -25,57 +30,53 @@ jobs:
           OUTPUT_FILE="Zipped-Code/submodules.txt"
           : > "$OUTPUT_FILE"
 
-          # Function to recursively parse .gitmodules from remote repo
+          REPO_OWNER="${GITHUB_REPOSITORY%%/*}"
+          REPO_NAME="${GITHUB_REPOSITORY##*/}"
+
           parse_gitmodules() {
             local base_folder="$1"    # e.g., main/
             local repo_url="$2"       # submodule URL
             local commit_sha="$3"     # commit SHA referenced by parent
 
-            # Fetch .gitmodules file from remote repo at commit SHA
-            gitmodules_url="$repo_url/raw/$commit_sha/.gitmodules"
-
-            # Try GitHub raw URL first
-            # Convert GitHub URL to raw URL if needed
+            # Only handle GitHub URLs
             if [[ "$repo_url" =~ github.com[:/](.*)/(.*)(.git)?$ ]]; then
               owner="${BASH_REMATCH[1]}"
               repo="${BASH_REMATCH[2]}"
               gitmodules_url="https://raw.githubusercontent.com/$owner/$repo/$commit_sha/.gitmodules"
-            fi
 
-            # Download .gitmodules if it exists
-            tmp_file=$(mktemp)
-            if curl -sfL "$gitmodules_url" -o "$tmp_file"; then
-              echo "🔍 Found .gitmodules in $repo_url @$commit_sha"
+              tmp_file=$(mktemp)
+              if curl -sfL "$gitmodules_url" -o "$tmp_file"; then
+                echo "🔍 Found .gitmodules in $repo_url @$commit_sha"
 
-              # Parse submodule blocks
-              awk -v folder="$base_folder" '
-                /^\\[submodule/ { block=$0; next }
-                /^[ \t]*path =/ { path=$3; next }
-                /^[ \t]*url =/ { url=$3; next }
-                /^[ \t]*branch =/ { branch=$3; next }
-                END { if(block!="") print block"\n\tpath = "path"\n\turl = "url"\n\tbranch = "branch"\n\tFolder = "folder path "\n" }
-                { if(block!="") print block"\n\tpath = "path"\n\turl = "url"\n\tFolder = "folder path "\n"; block=""; path=""; url=""; branch="" }
-              ' "$tmp_file" >> "$OUTPUT_FILE"
+                # Parse submodule blocks
+                awk -v folder="$base_folder" '
+                  /^\\[submodule/ { block=$0; next }
+                  /^[ \t]*path =/ { path=$3; next }
+                  /^[ \t]*url =/ { url=$3; next }
+                  /^[ \t]*branch =/ { branch=$3; next }
+                  END { if(block!="") print block"\n\tpath = "path"\n\turl = "url"\n\tbranch = "branch"\n\tFolder = "folder path "\n" }
+                  { if(block!="") print block"\n\tpath = "path"\n\turl = "url"\n\tFolder = "folder path "\n"; block=""; path=""; url=""; branch="" }
+                ' "$tmp_file" >> "$OUTPUT_FILE"
 
-              # For each submodule path, recurse
-              grep "path =" "$tmp_file" | awk '{print $3}' | while read -r sub_path; do
-                grep "url =" "$tmp_file" | awk '{print $3}' | while read -r sub_url; do
-                  parse_gitmodules "$base_folder$sub_path/" "$sub_url" "master"
+                # Recurse into nested submodules
+                grep "path =" "$tmp_file" | awk '{print $3}' | while read -r sub_path; do
+                  grep "url =" "$tmp_file" | awk '{print $3}' | while read -r sub_url; do
+                    parse_gitmodules "$base_folder$sub_path/" "$sub_url" "master"
+                  done
                 done
-              done
 
-              rm "$tmp_file"
-            else
-              echo "⚠️ No .gitmodules found at $gitmodules_url"
+                rm "$tmp_file"
+              else
+                echo "⚠️ No .gitmodules found at $gitmodules_url"
+              fi
             fi
           }
 
           # Start from the main repo
           if [ -f ".gitmodules" ]; then
             echo "🔍 Parsing main .gitmodules"
-            # Use the current HEAD for main repo
             commit_sha=$(git rev-parse HEAD)
-            parse_gitmodules "main/" "https://github.com/${{ github.repository }}.git" "$commit_sha"
+            parse_gitmodules "main/" "https://github.com/${GITHUB_REPOSITORY}.git" "$commit_sha"
           else
             echo "✅ No submodules in main repo"
           fi
