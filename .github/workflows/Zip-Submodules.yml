@@ -25,7 +25,7 @@ jobs:
           set -euo pipefail
 
           INPUT_FILE="Zipped-Code/submodules.txt"
-          DEST_FOLDER="main/Zipped-Code"
+          DEST_FOLDER="$GITHUB_WORKSPACE/main/Zipped-Code"
           TEMP_FOLDER="temp_submodule"
 
           awk '
@@ -51,16 +51,19 @@ jobs:
             # Clone shallow
             git clone --depth 1 --branch "$branch" "$url" "$TEMP_FOLDER"
 
-            # Decide destination path
-            zip_name=$(basename "$folder").zip
-            dest_path="$DEST_FOLDER/$folder/$zip_name"
+            # Normalize folder path (remove leading "main/")
+            norm_folder="${folder#main/}"
+
+            # Build destination
+            zip_name="$(basename "$norm_folder").zip"
+            dest_path="$DEST_FOLDER/$norm_folder/$zip_name"
 
             echo "    Creating: $dest_path"
             mkdir -p "$(dirname "$dest_path")"
 
-            # Zip repo contents (flat, no extra folder, no .git)
-            (cd "$TEMP_FOLDER" && zip -r "$GITHUB_WORKSPACE/$dest_path" . -x "*.git*" > /dev/null)
+            # Zip repo contents (flat, no extra folder, skip .git)
+            (cd "$TEMP_FOLDER" && zip -rq "$dest_path" . -x "*.git*")
 
             rm -rf "$TEMP_FOLDER"
-            echo "    ✅ Done"
+            echo "    ✅ Done: $zip_name"
           done
