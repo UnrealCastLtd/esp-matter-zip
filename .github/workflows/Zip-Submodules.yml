@@ -1,4 +1,4 @@
-name: Zip Submodules and Clean VM
+name: Zip Submodules Only
 
 on:
   workflow_dispatch:
@@ -20,23 +20,24 @@ jobs:
       - name: Create Zipped-Code folder
         run: mkdir -p main/Zipped-Code
 
-      - name: Zip submodules and clean up
+      - name: Zip submodules listed in submodules.txt
         run: |
           set -euo pipefail
 
           INPUT_FILE="Zipped-Code/submodules.txt"
           DEST_FOLDER="main/Zipped-Code"
 
+          # Read each Folder entry
           grep "^	Folder =" "$INPUT_FILE" | awk -F'=' '{gsub(/^[ \t]+|[ \t]+$/,"",$2); print $2}' | while read -r folder; do
             if [ -d "$folder" ]; then
               submodule_name=$(basename "$folder")
               zip_file="$DEST_FOLDER/$submodule_name.zip"
               echo "📦 Zipping $folder -> $zip_file"
 
-              # Zip contents directly without extra folder
-              (cd "$folder" && zip -r "$zip_file" . -x "*.git*") > /dev/null
+              # Zip contents of the folder directly, not including the folder itself
+              (cd "$folder" && zip -r "$zip_file" . -x "*.git*" > /dev/null)
 
-              # Remove the folder to free space
+              # Remove the folder after zipping to save VM space
               rm -rf "$folder"
             else
               echo "⚠️ Folder not found: $folder"
