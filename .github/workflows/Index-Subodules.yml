@@ -1,4 +1,4 @@
-name: Index All Submodules
+name: Index All Submodules (Fixed)
 
 on:
   workflow_dispatch:
@@ -26,20 +26,17 @@ jobs:
       - name: Generate and Compare Submodules Index
         id: generate_index
         run: |
-          # Generate the new index file in a temporary location.
+          # Create a new index file using 'git submodule status' for a full, recursive list.
           git submodule status --recursive > submodules-new.txt
           
-          # Check if the existing file is different from the newly generated one.
+          # Check for changes between the old and new list.
           if [ -f Zipped-Code/submodules.txt ]; then
             if cmp -s submodules-new.txt Zipped-Code/submodules.txt; then
               echo "No changes in submodules list. Skipping commit."
-              # Set output to indicate no changes.
               echo "changes_detected=false" >> $GITHUB_OUTPUT
             else
               echo "Changes detected. Proceeding with commit."
-              # Overwrite the old file with the new one.
               mv submodules-new.txt Zipped-Code/submodules.txt
-              # Set output to indicate changes were made.
               echo "changes_detected=true" >> $GITHUB_OUTPUT
             fi
           else
@@ -48,7 +45,6 @@ jobs:
             echo "changes_detected=true" >> $GITHUB_OUTPUT
           fi
           
-          # Clean up the temporary file
           rm -f submodules-new.txt
 
       - name: Commit and Push submodules.txt
