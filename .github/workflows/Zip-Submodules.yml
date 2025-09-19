@@ -17,10 +17,10 @@ jobs:
       - name: Install zip
         run: sudo apt-get update && sudo apt-get install -y zip git
 
-      - name: Create Zipped-Code folder
+      - name: Prepare output folder
         run: mkdir -p main/Zipped-Code
 
-      - name: Zip submodules from submodules.txt
+      - name: Process submodules.txt and create zips
         run: |
           set -euo pipefail
 
@@ -28,43 +28,34 @@ jobs:
           DEST_FOLDER="main/Zipped-Code"
           TEMP_FOLDER="temp_submodule"
 
-          grep "^	Folder =" "$INPUT_FILE" | awk -F'=' '{gsub(/^[ \t]+|[ \t]+$/,"",$2); print $2}' | while read -r folder; do
-            # Get the URL and branch from the same submodule block
-            url=$(awk -v f="$folder" '
-              BEGIN {url=""}
-              $0 ~ "\\[submodule" {inblock=0}
-              $0 ~ f {inblock=1}
-              inblock && $1=="url" {url=$3; print url; exit}
-            ' "$INPUT_FILE")
-
-            branch=$(awk -v f="$folder" '
-              BEGIN {branch="master"}
-              $0 ~ "\\[submodule" {inblock=0}
-              $0 ~ f {inblock=1}
-              inblock && $1=="branch" {branch=$3; print branch; exit}
-            ' "$INPUT_FILE")
-
-            if [ -z "$url" ]; then
-              echo "⚠️ URL not found for folder: $folder, skipping."
-              continue
-            fi
-
-            echo "📦 Processing submodule: $folder"
+          awk '
+            BEGIN {url=""; branch="master"; folder=""}
+            /^\[submodule/ { if (url != "" && folder != "") {
+                               print url "|" branch "|" folder
+                             }
+                             url=""; branch="master"; folder="" }
+            /url =/    {url=$3}
+            /branch =/ {branch=$3}
+            /Folder =/ {folder=$3}
+            END { if (url != "" && folder != "") {
+                    print url "|" branch "|" folder
+                  } }
+          ' "$INPUT_FILE" | while IFS="|" read -r url branch folder; do
+            echo "📦 Processing:"
             echo "    URL: $url"
-            echo "    Branch: ${branch:-master}"
+            echo "    Branch: $branch"
+            echo "    Folder: $folder"
 
-            # Remove any old temp folder
             rm -rf "$TEMP_FOLDER"
             mkdir -p "$TEMP_FOLDER"
 
-            # Clone only the submodule into temp folder (shallow)
-            git clone --depth 1 --branch "${branch:-master}" "$url" "$TEMP_FOLDER"
+            # Clone shallow
+            git clone --depth 1 --branch "$branch" "$url" "$TEMP_FOLDER"
 
-            # Zip contents directly into DEST_FOLDER
+            # Zip the contents (no extra folder inside zip)
             zip_name=$(basename "$folder").zip
-            echo "    Creating zip: $DEST_FOLDER/$zip_name"
-            (cd "$TEMP_FOLDER" && zip -r "../$DEST_FOLDER/$zip_name" . -x "*.git*" > /dev/null)
+            echo "    Creating: $DEST_FOLDER/$zip_name"
+            (cd "$TEMP_FOLDER" && zip -r "../../$DEST_FOLDER/$zip_name" . -x "*.git*" > /dev/null)
 
-            # Remove temp folder to free VM space
             rm -rf "$TEMP_FOLDER"
           done
