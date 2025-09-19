@@ -1,0 +1,44 @@
+name: Zip Submodules and Clean VM
+
+on:
+  workflow_dispatch:
+
+jobs:
+  zip-submodules:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Install zip
+        run: sudo apt-get update && sudo apt-get install -y zip
+
+      - name: Create Zipped-Code folder
+        run: mkdir -p main/Zipped-Code
+
+      - name: Zip submodules and clean up
+        run: |
+          set -euo pipefail
+
+          INPUT_FILE="Zipped-Code/submodules.txt"
+          DEST_FOLDER="main/Zipped-Code"
+
+          grep "^	Folder =" "$INPUT_FILE" | awk -F'=' '{gsub(/^[ \t]+|[ \t]+$/,"",$2); print $2}' | while read -r folder; do
+            if [ -d "$folder" ]; then
+              submodule_name=$(basename "$folder")
+              zip_file="$DEST_FOLDER/$submodule_name.zip"
+              echo "📦 Zipping $folder -> $zip_file"
+
+              # Zip contents directly without extra folder
+              (cd "$folder" && zip -r "$zip_file" . -x "*.git*") > /dev/null
+
+              # Remove the folder to free space
+              rm -rf "$folder"
+            else
+              echo "⚠️ Folder not found: $folder"
+            fi
+          done
