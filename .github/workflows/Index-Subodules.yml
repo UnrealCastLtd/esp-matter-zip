@@ -1,10 +1,10 @@
-name: List All Submodules
+name: Recursive Submodules Index
 
 on:
   workflow_dispatch:
 
 jobs:
-  list-submodules:
+  index-submodules:
     runs-on: ubuntu-latest
 
     steps:
@@ -14,53 +14,77 @@ jobs:
           fetch-depth: 1
           submodules: false
 
-      - name: Recursively list submodules without cloning
+      - name: Create output folder
+        run: mkdir -p Zipped-Code
+
+      - name: Generate recursive submodules list
+        id: generate_index
         run: |
           set -euo pipefail
 
-          list_submodules() {
-            local repo_path="$1"
-            local prefix="$2"
+          OUTPUT_FILE="Zipped-Code/submodules.txt"
+          : > "$OUTPUT_FILE"
 
-            if [ -f "$repo_path/.gitmodules" ]; then
-              echo "🔍 Found .gitmodules in $repo_path"
+          # Function to recursively parse .gitmodules from remote repo
+          parse_gitmodules() {
+            local base_folder="$1"    # e.g., main/
+            local repo_url="$2"       # submodule URL
+            local commit_sha="$3"     # commit SHA referenced by parent
 
-              # Extract paths from .gitmodules
-              grep "path =" "$repo_path/.gitmodules" | awk '{print $3}' | while read -r sub_path; do
-                local full_path="$prefix$sub_path"
-                echo "$full_path"
+            # Fetch .gitmodules file from remote repo at commit SHA
+            gitmodules_url="$repo_url/raw/$commit_sha/.gitmodules"
 
-                # If the submodule contains its own .gitmodules file in the repo,
-                # read it directly from Git (without checking out)
-                if git show HEAD:"$sub_path/.gitmodules" > /dev/null 2>&1; then
-                  # Create a temp file to hold its .gitmodules
-                  tmp_file=$(mktemp)
-                  git show HEAD:"$sub_path/.gitmodules" > "$tmp_file"
-                  
-                  # Recurse by parsing the temp file
-                  list_embedded "$tmp_file" "$full_path/"
-                  rm "$tmp_file"
-                fi
+            # Try GitHub raw URL first
+            # Convert GitHub URL to raw URL if needed
+            if [[ "$repo_url" =~ github.com[:/](.*)/(.*)(.git)?$ ]]; then
+              owner="${BASH_REMATCH[1]}"
+              repo="${BASH_REMATCH[2]}"
+              gitmodules_url="https://raw.githubusercontent.com/$owner/$repo/$commit_sha/.gitmodules"
+            fi
+
+            # Download .gitmodules if it exists
+            tmp_file=$(mktemp)
+            if curl -sfL "$gitmodules_url" -o "$tmp_file"; then
+              echo "🔍 Found .gitmodules in $repo_url @$commit_sha"
+
+              # Parse submodule blocks
+              awk -v folder="$base_folder" '
+                /^\\[submodule/ { block=$0; next }
+                /^[ \t]*path =/ { path=$3; next }
+                /^[ \t]*url =/ { url=$3; next }
+                /^[ \t]*branch =/ { branch=$3; next }
+                END { if(block!="") print block"\n\tpath = "path"\n\turl = "url"\n\tbranch = "branch"\n\tFolder = "folder path "\n" }
+                { if(block!="") print block"\n\tpath = "path"\n\turl = "url"\n\tFolder = "folder path "\n"; block=""; path=""; url=""; branch="" }
+              ' "$tmp_file" >> "$OUTPUT_FILE"
+
+              # For each submodule path, recurse
+              grep "path =" "$tmp_file" | awk '{print $3}' | while read -r sub_path; do
+                grep "url =" "$tmp_file" | awk '{print $3}' | while read -r sub_url; do
+                  parse_gitmodules "$base_folder$sub_path/" "$sub_url" "master"
+                done
               done
+
+              rm "$tmp_file"
+            else
+              echo "⚠️ No .gitmodules found at $gitmodules_url"
             fi
           }
 
-          list_embedded() {
-            local gitmodules_file="$1"
-            local prefix="$2"
+          # Start from the main repo
+          if [ -f ".gitmodules" ]; then
+            echo "🔍 Parsing main .gitmodules"
+            # Use the current HEAD for main repo
+            commit_sha=$(git rev-parse HEAD)
+            parse_gitmodules "main/" "https://github.com/${{ github.repository }}.git" "$commit_sha"
+          else
+            echo "✅ No submodules in main repo"
+          fi
 
-            grep "path =" "$gitmodules_file" | awk '{print $3}' | while read -r sub_path; do
-              local full_path="$prefix$sub_path"
-              echo "$full_path"
+          echo "📋 Recursive submodules index saved to $OUTPUT_FILE"
 
-              if git show HEAD:"$prefix$sub_path/.gitmodules" > /dev/null 2>&1; then
-                tmp_file=$(mktemp)
-                git show HEAD:"$prefix$sub_path/.gitmodules" > "$tmp_file"
-                list_embedded "$tmp_file" "$full_path/"
-                rm "$tmp_file"
-              fi
-            done
-          }
-
-          echo "📋 Listing all submodules:"
-          list_submodules "." "main/"
+      - name: Commit and Push submodules.txt
+        if: always()
+        run: |
+          git add Zipped-Code/submodules.txt
+          git commit -m "Update recursive submodules index" || echo "No changes to commit"
+          git push
