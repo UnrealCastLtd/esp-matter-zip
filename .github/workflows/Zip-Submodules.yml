@@ -1,71 +1,77 @@
-name: Zip Submodules Individually
+name: Zip Submodules
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
 
 jobs:
-  zip-submodules:
+  zip-and-move:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-          submodules: false
+          submodules: false # We will handle submodules manually
 
-      - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y zip git
-
-      - name: Prepare output folder
-        run: mkdir -p main/Zipped-Code
-
-      - name: Process submodules.txt and create zips
+      - name: Set up and run script
         run: |
-          set -euo pipefail
+          # Create the main directory for zipped files
+          mkdir -p main/Zipped-Code
 
-          INPUT_FILE="Zipped-Code/submodules.txt"
-          DEST_FOLDER="main/Zipped-Code"
-          TEMP_FOLDER="temp_submodule"
+          # Read the submodules.txt file line by line
+          while IFS= read -r line; do
+            # Skip empty lines and lines that are not submodule definitions
+            if [[ "$line" =~ \[submodule\ \"(.*)\"\] ]]; then
+              module_name="${BASH_REMATCH[1]}"
+              
+              # Find the path and folder from the next lines
+              read -r path_line
+              path=$(echo "$path_line" | awk -F'=' '{print $2}' | sed 's/^[[:space:]]*//')
+              read -r url_line
+              url=$(echo "$url_line" | awk -F'=' '{print $2}' | sed 's/^[[:space:]]*//')
+              # Optional: handle branch
+              read -r next_line
+              if [[ "$next_line" =~ "branch" ]]; then
+                # Skip the branch line and get the next one which is the Folder
+                read -r folder_line
+              else
+                # It was the folder line
+                folder_line="$next_line"
+              fi
+              folder=$(echo "$folder_line" | awk -F'=' '{print $2}' | sed 's/^[[:space:]]*//')
 
-          # Parse the TXT file and iterate submodules
-          awk '
-            BEGIN { url=""; branch=""; folder="" }
-            /^\[submodule/ { if (url != "" && folder != "") { print url "|" branch "|" folder } url=""; branch=""; folder="" }
-            /url =/    { url=$3 }
-            /branch =/ { branch=$3 }
-            /Folder =/ { folder=$3 }
-            END { if (url != "" && folder != "") { print url "|" branch "|" folder } }
-          ' "$INPUT_FILE" | while IFS="|" read -r url branch folder; do
-            echo "📦 Processing:"
-            echo "    URL: $url"
-            echo "    Branch: ${branch:-master}"
-            echo "    Folder: $folder"
+              echo "Processing submodule: $module_name"
+              echo "Path: $path"
+              echo "URL: $url"
+              echo "Destination Folder: $folder"
 
-            # Clean temp folder
-            rm -rf "$TEMP_FOLDER"
-            mkdir -p "$TEMP_FOLDER"
+              # 1. Clone the module into a temporary directory
+              temp_dir="temp_clone"
+              git clone --depth 1 "$url" "$temp_dir"
 
-            # Clone shallow
-            if [ -n "$branch" ]; then
-              git clone --depth 1 --branch "$branch" "$url" "$TEMP_FOLDER"
-            else
-              git clone --depth 1 "$url" "$TEMP_FOLDER"
+              # 2. Zip the contents of the cloned directory
+              # Exclude the .git folder to save space
+              zip -r "${module_name}.zip" "$temp_dir" -x "*.git*"
+
+              # 3. Create the destination folder if it doesn't exist
+              mkdir -p "$folder"
+
+              # 4. Move the zipped file to the destination folder
+              mv "${module_name}.zip" "$folder"
+
+              # 5. Clean up the temporary directory to save space
+              rm -rf "$temp_dir"
+
+              echo "Successfully zipped and moved $module_name"
+              echo "---------------------------------------"
             fi
+          done < main/Zipped-Code/submodules.txt
 
-            # Ensure DEST_FOLDER exists
-            mkdir -p "$DEST_FOLDER"
-
-            # Create zip file for this module
-            ZIP_NAME=$(basename "$folder").zip
-
-            # Zip top-level content only, exclude .git
-            cd "$TEMP_FOLDER"
-            zip -r "../../$DEST_FOLDER/$ZIP_NAME" . -x "*.git*" > /dev/null
-            cd ..
-
-            # Cleanup temp folder
-            rm -rf "$TEMP_FOLDER"
-
-            echo "✅ Created $DEST_FOLDER/$ZIP_NAME"
-          done
+      - name: Upload Zipped Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: zipped-submodules
+          path: main/Zipped-Code/
