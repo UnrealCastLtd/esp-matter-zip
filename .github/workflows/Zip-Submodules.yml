@@ -1,29 +1,4 @@
-name: Zip Submodules
-
-on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
-
-jobs:
-  zip-and-move:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-        with:
-          submodules: false # We will handle submodules manually
-
-      - name: Verify submodules.txt exists
-        run: |
-          if [ ! -f "Zipped-Code/submodules.txt" ]; then
-            echo "Error: The file Zipped-Code/submodules.txt was not found."
-            exit 1
-          fi
-
-      - name: Set up and run script
+- name: Set up and run script
         id: zip-script
         run: |
           # Create the main directory for zipped files
@@ -56,7 +31,14 @@ jobs:
 
               # 1. Clone the module into a temporary directory
               temp_dir="temp_clone"
+              rm -rf "$temp_dir" # Clean up temp dir before cloning
               git clone --depth 1 "$url" "$temp_dir"
+
+              # Check if the clone was successful
+              if [ ! -d "$temp_dir" ]; then
+                echo "Error: git clone failed for $url"
+                exit 1
+              fi
 
               # 2. Zip the contents of the cloned directory
               # Exclude the .git folder to save space
@@ -75,9 +57,3 @@ jobs:
               echo "---------------------------------------"
             fi
           done < Zipped-Code/submodules.txt
-
-      - name: Upload Zipped Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: zipped-submodules
-          path: Zipped-Code/
