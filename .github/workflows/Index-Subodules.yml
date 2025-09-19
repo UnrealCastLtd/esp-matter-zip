@@ -30,9 +30,6 @@ jobs:
           OUTPUT_FILE="Zipped-Code/submodules.txt"
           : > "$OUTPUT_FILE"
 
-          REPO_OWNER="${GITHUB_REPOSITORY%%/*}"
-          REPO_NAME="${GITHUB_REPOSITORY##*/}"
-
           parse_gitmodules() {
             local base_folder="$1"    # e.g., main/
             local repo_url="$2"       # submodule URL
@@ -42,6 +39,8 @@ jobs:
             if [[ "$repo_url" =~ github.com[:/](.*)/(.*)(.git)?$ ]]; then
               owner="${BASH_REMATCH[1]}"
               repo="${BASH_REMATCH[2]}"
+              # strip .git if present
+              repo="${repo%.git}"
               gitmodules_url="https://raw.githubusercontent.com/$owner/$repo/$commit_sha/.gitmodules"
 
               tmp_file=$(mktemp)
@@ -76,7 +75,8 @@ jobs:
           if [ -f ".gitmodules" ]; then
             echo "🔍 Parsing main .gitmodules"
             commit_sha=$(git rev-parse HEAD)
-            parse_gitmodules "main/" "https://github.com/${GITHUB_REPOSITORY}.git" "$commit_sha"
+            # pass repo URL without .git
+            parse_gitmodules "main/" "https://github.com/${GITHUB_REPOSITORY}" "$commit_sha"
           else
             echo "✅ No submodules in main repo"
           fi
