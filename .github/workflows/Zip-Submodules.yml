@@ -60,9 +60,12 @@ jobs:
               echo "URL: $url"
               echo "Destination Folder: $folder"
 
+              # Use a temporary file name to avoid path issues
+              temp_zip_file="temp_zip_file_$(date +%s).zip"
+
               # 1. Clone the module into a temporary directory
               temp_dir="temp_clone"
-              # Important: Clean up the temp directory from a previous run before cloning
+              # Clean up the temp directory from a previous run before cloning
               rm -rf "$temp_dir" 
               git clone --depth 1 "$url" "$temp_dir"
 
@@ -72,15 +75,15 @@ jobs:
                 exit 1
               fi
 
-              # 2. Zip the contents of the cloned directory
+              # 2. Zip the contents of the cloned directory to a temporary file
               # Exclude the .git folder to save space
-              zip -r "${module_name}.zip" "$temp_dir" -x "*.git*"
+              zip -r "$temp_zip_file" "$temp_dir" -x "*.git*"
 
               # 3. Create the destination folder if it doesn't exist
               mkdir -p "$folder"
 
-              # 4. Move the zipped file to the destination folder
-              mv "${module_name}.zip" "$folder"
+              # 4. Move and rename the zipped file to the destination folder
+              mv "$temp_zip_file" "$folder/${module_name}.zip"
 
               # 5. Clean up the temporary directory to save space on the runner
               rm -rf "$temp_dir"
