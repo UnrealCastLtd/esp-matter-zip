@@ -1,69 +1,49 @@
-name: Zip Submodules
+name: Zip ConnectedHomeIP Module
 
 on:
   workflow_dispatch:
 
 jobs:
-  zip-submodules:
+  zip-connectedhomeip:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v3
+      - name: Checkout repo
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          submodules: false
 
-      - name: Setup Git
-        run: |
-          git config --global user.name "github-actions"
-          git config --global user.email "github-actions@github.com"
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y zip git
 
-      - name: Prepare Zipped-Code folder
+      - name: Prepare output folder
         run: mkdir -p main/Zipped-Code
 
-      - name: Process Submodules
+      - name: Zip connectedhomeip
         run: |
-          repos=(
-            "https://github.com/espressif/connectedhomeip.git master connectedhomeip/connectedhomeip"
-            "https://github.com/espressif/libtrustymatter.git main connectedhomeip/connectedhomeip/third_party/libtrustymatter/repo"
-          )
+          set -euo pipefail
 
-          for entry in "${repos[@]}"; do
-            url=$(echo $entry | cut -d' ' -f1)
-            branch=$(echo $entry | cut -d' ' -f2)
-            folder=$(echo $entry | cut -d' ' -f3)
+          URL="https://github.com/espressif/connectedhomeip.git"
+          BRANCH="master"
+          FOLDER="connectedhomeip"
+          TEMP_FOLDER="temp_submodule"
 
-            echo "📦 Processing:"
-            echo "    URL: $url"
-            echo "    Branch: $branch"
-            echo "    Folder: $folder"
+          echo "📦 Processing $URL"
 
-            # temp folder for VM work
-            temp_folder="temp_submodule"
-            rm -rf "$temp_folder"
+          # Clean temp folder
+          rm -rf "$TEMP_FOLDER"
+          mkdir -p "$TEMP_FOLDER"
 
-            # clone repo
-            git clone --branch "$branch" --depth 1 "$url" "$temp_folder"
+          # Clone repo shallow, no submodules
+          git clone --branch "$BRANCH" --depth 1 "$URL" "$TEMP_FOLDER"
 
-            # make sure parent folder exists in repo
-            mkdir -p "main/Zipped-Code"
+          # Create zip of only the main repo content
+          ZIP_NAME="${FOLDER}.zip"
+          echo "    Creating: main/Zipped-Code/$ZIP_NAME"
+          cd "$TEMP_FOLDER"
+          zip -r "../main/Zipped-Code/$ZIP_NAME" . -x "*.git*" -x "*/.gitmodules" -x "*/third_party/*" > /dev/null
+          cd ..
 
-            # zip it
-            zip_name=$(basename "$folder").zip
-            echo "    Creating: main/Zipped-Code/$zip_name"
-            (cd "$temp_folder" && zip -r "../$zip_name" .)
-
-            # move zip to destination
-            mv "$zip_name" "main/Zipped-Code/$zip_name"
-
-            # cleanup temp
-            rm -rf "$temp_folder"
-          done
-
-      - name: Commit and Push
-        run: |
-          cd main/Zipped-Code
-          git add .
-          cd ../..
-          git commit -m "Add zipped submodules" || echo "No changes to commit"
-          git push
+          # Clean up temp folder
+          rm -rf "$TEMP_FOLDER"
