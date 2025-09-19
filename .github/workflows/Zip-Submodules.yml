@@ -48,15 +48,12 @@ jobs:
 
             rm -rf "$TEMP_FOLDER"
 
-            # Clone shallow
-            git clone --depth 1 --branch "$branch" "$url" "$TEMP_FOLDER"
+            # Clone shallow without submodules
+            git clone --depth 1 --no-recurse-submodules --branch "$branch" "$url" "$TEMP_FOLDER"
 
-            # Normalize folder path (remove leading "main/")
-            norm_folder="${folder#main/}"
-
-            # Build destination
-            zip_name="$(basename "$norm_folder").zip"
-            dest_path="$DEST_FOLDER/$norm_folder/$zip_name"
+            # Zip name = last folder only
+            zip_name="$(basename "$folder").zip"
+            dest_path="$DEST_FOLDER/$zip_name"
 
             echo "    Creating: $dest_path"
             mkdir -p "$(dirname "$dest_path")"
