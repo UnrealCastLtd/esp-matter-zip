@@ -1,0 +1,36 @@
+name: Index Submodules
+
+on:
+  workflow_dispatch:
+
+jobs:
+  index_submodules:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}
+
+      - name: Create Zipped-Code directory
+        run: mkdir -p Zipped-Code/
+
+      - name: Index All Submodules and Save to File
+        run: |
+          # Use 'git submodule status --recursive' to index all submodule paths.
+          # The output is redirected to a file inside the Zipped-Code/ directory.
+          git submodule status --recursive > Zipped-Code/submodules.txt
+
+      - name: Commit and Push submodules.txt
+        run: |
+          git add Zipped-Code/submodules.txt
+          git commit -m "Create submodules index file"
+          git push
