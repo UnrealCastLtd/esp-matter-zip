@@ -16,7 +16,7 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
-        token: ${{ secrets.Zipped-Code }}
+        token: ${{ secrets.Zipped-Code || secrets.GITHUB_TOKEN }}
         fetch-depth: 0
     
     - name: Setup Python
@@ -311,7 +311,7 @@ jobs:
                     return False
                 
                 # Push to remote with LFS
-                print(f"   🚀 Pushing to remote with PAT token (this may take longer for large files)...")
+                print(f"   🚀 Pushing to remote with authentication token...")
                 result = subprocess.run(['git', 'push'], capture_output=True, text=True, timeout=600)  # 10 min timeout for large files
                 if result.returncode != 0:
                     print(f"   ⚠️  Failed to push: {result.stderr}")
@@ -431,7 +431,7 @@ jobs:
         
         # Main execution
         try:
-            print("🎯 Starting submodule processing with immediate commits using PAT token...")
+            print("🎯 Starting submodule processing with immediate commits using authentication token...")
             
             # Parse submodules
             submodules = parse_submodules('Zipped-Code/submodules.txt')
