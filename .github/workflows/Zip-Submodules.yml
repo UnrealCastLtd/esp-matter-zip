@@ -31,6 +31,7 @@ jobs:
         import subprocess
         import json
         import shutil
+        import time
         from urllib.parse import urlparse
         
         def parse_submodules(file_path):
@@ -96,22 +97,50 @@ jobs:
             
             return list(unique_dict.values())
         
-        def cleanup_temp_files():
-            """Clean up any temporary files and directories"""
-            for item in os.listdir('.'):
-                if item.startswith('temp_clone_') or item.endswith('.zip'):
-                    if os.path.isdir(item):
-                        shutil.rmtree(item, ignore_errors=True)
-                    else:
-                        try:
-                            os.remove(item)
-                        except:
-                            pass
+        def force_cleanup_temp_files():
+            """Aggressively clean up any temporary files and directories"""
+            print("🧹 Performing cleanup...")
+            
+            # List of patterns to clean up
+            cleanup_patterns = ['temp_clone*', '*.zip']
+            
+            for pattern in cleanup_patterns:
+                # Use shell commands for more reliable cleanup
+                subprocess.run(f"rm -rf {pattern}", shell=True, capture_output=True)
+            
+            # Specifically target temp_clone directory
+            if os.path.exists('temp_clone'):
+                print("   Removing temp_clone directory...")
+                try:
+                    # Try Python removal first
+                    shutil.rmtree('temp_clone', ignore_errors=True)
+                    time.sleep(0.5)  # Give it a moment
+                    
+                    # If it still exists, use shell command
+                    if os.path.exists('temp_clone'):
+                        subprocess.run('rm -rf temp_clone', shell=True, capture_output=True)
+                        time.sleep(0.5)
+                        
+                    # Final check
+                    if os.path.exists('temp_clone'):
+                        print("   ⚠️  Warning: temp_clone still exists, trying sudo...")
+                        subprocess.run('sudo rm -rf temp_clone', shell=True, capture_output=True)
+                        
+                except Exception as e:
+                    print(f"   Error during cleanup: {e}")
+            
+            # Verify cleanup
+            if os.path.exists('temp_clone'):
+                print("   ❌ Failed to remove temp_clone")
+                return False
+            else:
+                print("   ✅ Cleanup successful")
+                return True
         
         def check_disk_space():
             """Check available disk space"""
             result = subprocess.run(['df', '-h', '.'], capture_output=True, text=True)
-            print(f"Disk space: {result.stdout}")
+            print(f"💾 Disk space: {result.stdout.split()[10]} available")
         
         # Parse submodules from the correct path
         submodules = parse_submodules('Zipped-Code/submodules.txt')
@@ -119,6 +148,9 @@ jobs:
         
         print(f"Found {len(unique_submodules)} unique submodules to process")
         check_disk_space()
+        
+        # Initial cleanup
+        force_cleanup_temp_files()
         
         # Process each unique submodule ONE BY ONE
         for i, submodule in enumerate(unique_submodules):
@@ -128,8 +160,11 @@ jobs:
             print(f"Folder: {submodule['folder']}")
             print(f"{'='*60}")
             
-            # Clean up any leftover files from previous iterations
-            cleanup_temp_files()
+            # Force cleanup before each iteration
+            cleanup_success = force_cleanup_temp_files()
+            if not cleanup_success:
+                print("❌ Cleanup failed, skipping this submodule")
+                continue
             
             # Extract repo name from URL
             parsed_url = urlparse(submodule['url'])
@@ -141,16 +176,24 @@ jobs:
             
             try:
                 print(f"Step 1: Cloning repository...")
+                
+                # Double-check that clone directory doesn't exist
+                if os.path.exists(clone_dir):
+                    print(f"   ⚠️  {clone_dir} still exists, forcing removal...")
+                    subprocess.run(f'rm -rf {clone_dir}', shell=True)
+                    time.sleep(1)
+                
                 # Clone with specific branch if specified
                 if 'branch' in submodule:
-                    clone_cmd = f"git clone --depth 1 --single-branch --branch {branch} {submodule['url']} {clone_dir}"
+                    clone_cmd = f"git clone --depth 1 --single-branch --branch {branch} '{submodule['url']}' {clone_dir}"
                 else:
-                    clone_cmd = f"git clone --depth 1 --single-branch {submodule['url']} {clone_dir}"
+                    clone_cmd = f"git clone --depth 1 --single-branch '{submodule['url']}' {clone_dir}"
                 
+                print(f"   Running: {clone_cmd}")
                 result = subprocess.run(clone_cmd, shell=True, capture_output=True, text=True)
                 if result.returncode != 0:
-                    print(f"Failed to clone {submodule['url']}: {result.stderr}")
-                    cleanup_temp_files()
+                    print(f"❌ Failed to clone {submodule['url']}: {result.stderr}")
+                    force_cleanup_temp_files()
                     continue
                 
                 print(f"Step 2: Creating target directory structure...")
@@ -175,14 +218,15 @@ jobs:
                 if result.returncode == 0:
                     print(f"✅ Successfully created: {zip_path}")
                     # Get file size
-                    size = os.path.getsize(zip_path)
-                    print(f"   File size: {size / (1024*1024):.2f} MB")
+                    if os.path.exists(zip_path):
+                        size = os.path.getsize(zip_path)
+                        print(f"   File size: {size / (1024*1024):.2f} MB")
                 else:
                     print(f"❌ Failed to create zip: {result.stderr}")
                 
                 print(f"Step 4: Cleaning up temporary files...")
                 # Immediately clean up clone directory and any temp files
-                cleanup_temp_files()
+                force_cleanup_temp_files()
                 
                 print(f"✅ Completed processing {submodule['name']}")
                 check_disk_space()
@@ -190,7 +234,7 @@ jobs:
             except Exception as e:
                 print(f"❌ Error processing {submodule['name']}: {str(e)}")
                 # Clean up on error
-                cleanup_temp_files()
+                force_cleanup_temp_files()
                 continue
         
         print(f"\n{'='*60}")
