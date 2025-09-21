@@ -30,6 +30,7 @@ jobs:
         import os
         import subprocess
         import json
+        import shutil
         from urllib.parse import urlparse
         
         def parse_submodules(file_path):
@@ -95,65 +96,107 @@ jobs:
             
             return list(unique_dict.values())
         
+        def cleanup_temp_files():
+            """Clean up any temporary files and directories"""
+            for item in os.listdir('.'):
+                if item.startswith('temp_clone_') or item.endswith('.zip'):
+                    if os.path.isdir(item):
+                        shutil.rmtree(item, ignore_errors=True)
+                    else:
+                        try:
+                            os.remove(item)
+                        except:
+                            pass
+        
+        def check_disk_space():
+            """Check available disk space"""
+            result = subprocess.run(['df', '-h', '.'], capture_output=True, text=True)
+            print(f"Disk space: {result.stdout}")
+        
         # Parse submodules from the correct path
         submodules = parse_submodules('Zipped-Code/submodules.txt')
         unique_submodules = get_unique_submodules(submodules)
         
         print(f"Found {len(unique_submodules)} unique submodules to process")
+        check_disk_space()
         
-        # Process each unique submodule
+        # Process each unique submodule ONE BY ONE
         for i, submodule in enumerate(unique_submodules):
-            print(f"\nProcessing {i+1}/{len(unique_submodules)}: {submodule['name']}")
+            print(f"\n{'='*60}")
+            print(f"Processing {i+1}/{len(unique_submodules)}: {submodule['name']}")
             print(f"URL: {submodule['url']}")
             print(f"Folder: {submodule['folder']}")
+            print(f"{'='*60}")
+            
+            # Clean up any leftover files from previous iterations
+            cleanup_temp_files()
             
             # Extract repo name from URL
             parsed_url = urlparse(submodule['url'])
             repo_name = os.path.basename(parsed_url.path).replace('.git', '')
             
-            # Clone the repository
-            clone_dir = f"temp_clone_{i}"
+            # Use a simple clone directory name
+            clone_dir = "temp_clone"
             branch = submodule.get('branch', 'main')
             
             try:
+                print(f"Step 1: Cloning repository...")
                 # Clone with specific branch if specified
                 if 'branch' in submodule:
-                    clone_cmd = f"git clone --depth 1 --branch {branch} {submodule['url']} {clone_dir}"
+                    clone_cmd = f"git clone --depth 1 --single-branch --branch {branch} {submodule['url']} {clone_dir}"
                 else:
-                    clone_cmd = f"git clone --depth 1 {submodule['url']} {clone_dir}"
+                    clone_cmd = f"git clone --depth 1 --single-branch {submodule['url']} {clone_dir}"
                 
                 result = subprocess.run(clone_cmd, shell=True, capture_output=True, text=True)
                 if result.returncode != 0:
                     print(f"Failed to clone {submodule['url']}: {result.stderr}")
+                    cleanup_temp_files()
                     continue
                 
+                print(f"Step 2: Creating target directory structure...")
                 # Create the target directory structure
                 target_dir = f"Zipped-Code/{submodule['folder']}"
                 os.makedirs(target_dir, exist_ok=True)
                 
+                print(f"Step 3: Creating zip file...")
                 # Create zip file
                 zip_filename = f"{repo_name}.zip"
                 zip_path = os.path.join(target_dir, zip_filename)
                 
-                # Zip the cloned repository (excluding .git folder)
-                zip_cmd = f"cd {clone_dir} && zip -r ../{zip_path} . -x '*.git*'"
+                # Remove .git directory to save space before zipping
+                git_dir = os.path.join(clone_dir, '.git')
+                if os.path.exists(git_dir):
+                    shutil.rmtree(git_dir, ignore_errors=True)
+                
+                # Zip the cloned repository
+                zip_cmd = f"cd {clone_dir} && zip -r ../{zip_path} ."
                 result = subprocess.run(zip_cmd, shell=True, capture_output=True, text=True)
                 
                 if result.returncode == 0:
-                    print(f"Successfully created: {zip_path}")
+                    print(f"✅ Successfully created: {zip_path}")
+                    # Get file size
+                    size = os.path.getsize(zip_path)
+                    print(f"   File size: {size / (1024*1024):.2f} MB")
                 else:
-                    print(f"Failed to create zip: {result.stderr}")
+                    print(f"❌ Failed to create zip: {result.stderr}")
                 
-                # Clean up clone directory
-                subprocess.run(f"rm -rf {clone_dir}", shell=True)
+                print(f"Step 4: Cleaning up temporary files...")
+                # Immediately clean up clone directory and any temp files
+                cleanup_temp_files()
+                
+                print(f"✅ Completed processing {submodule['name']}")
+                check_disk_space()
                 
             except Exception as e:
-                print(f"Error processing {submodule['name']}: {str(e)}")
+                print(f"❌ Error processing {submodule['name']}: {str(e)}")
                 # Clean up on error
-                subprocess.run(f"rm -rf {clone_dir}", shell=True)
+                cleanup_temp_files()
                 continue
         
-        print("\nCompleted processing all submodules")
+        print(f"\n{'='*60}")
+        print("🎉 Completed processing all submodules")
+        print(f"{'='*60}")
+        check_disk_space()
         EOF
     
     - name: Commit and push zipped files
