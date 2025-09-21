@@ -246,14 +246,19 @@ jobs:
                 return False
         
         # Main processing logic
-        submodules_file = "submodules.txt"
+        submodules_file = "Zipped-Code/submodules.txt"
         
+ 
         if not os.path.exists(submodules_file):
             print(f"❌ {submodules_file} not found!")
             print(f"📍 Current working directory: {os.getcwd()}")
             print(f"📁 Directory contents:")
             for item in os.listdir('.'):
                 print(f"   - {item}")
+            if os.path.exists('Zipped-Code'):
+                print(f"📁 Zipped-Code contents:")
+                for item in os.listdir('Zipped-Code'):
+                    print(f"   - {item}")
             exit(1)
         
         # Read and parse submodules
