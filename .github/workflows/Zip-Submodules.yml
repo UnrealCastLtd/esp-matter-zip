@@ -42,7 +42,6 @@ jobs:
         import shutil
         import zipfile
         import time
-        import psutil
         import signal
         import sys
         from collections import defaultdict
@@ -52,17 +51,11 @@ jobs:
             try:
                 disk_usage = shutil.disk_usage('.')
                 available_gb = disk_usage.free / (1024**3)
-                memory = psutil.virtual_memory()
-                available_memory_gb = memory.available / (1024**3)
                 
                 print(f"💾 Available disk space: {available_gb:.1f} GB")
-                print(f"🧠 Available memory: {available_memory_gb:.1f} GB")
                 
                 if available_gb < 2:
                     print("⚠️  Warning: Low disk space!")
-                    return False
-                if available_memory_gb < 1:
-                    print("⚠️  Warning: Low memory!")
                     return False
                 return True
             except Exception as e:
@@ -75,14 +68,10 @@ jobs:
             
             # Kill any lingering git processes
             try:
-                for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-                    try:
-                        if proc.info['name'] and 'git' in proc.info['name'].lower():
-                            if proc.info['cmdline'] and any('clone' in str(cmd).lower() for cmd in proc.info['cmdline']):
-                                print(f"    🔪 Killing git process: {proc.info['pid']}")
-                                proc.kill()
-                    except Exception:
-                        pass
+                result = subprocess.run(['pkill', '-f', 'git.*clone'], 
+                                      capture_output=True, text=True)
+                if result.returncode == 0:
+                    print("    🔪 Killed lingering git processes")
             except Exception:
                 pass
             
