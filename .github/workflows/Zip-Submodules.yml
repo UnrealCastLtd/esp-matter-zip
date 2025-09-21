@@ -3,100 +3,171 @@ name: Zip Submodules
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [ main ]
+    paths:
+      - 'submodules.txt'
 
 jobs:
-  zip-and-move:
+  zip-submodules:
     runs-on: ubuntu-latest
-
+    
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-        with:
-          submodules: false
-
-      - name: Verify submodules.txt exists
-        run: |
-          if [ ! -f "Zipped-Code/submodules.txt" ]; then
-            echo "Error: The file Zipped-Code/submodules.txt was not found."
-            exit 1
-          fi
-
-      - name: Set up and run script
-        run: |
-          # Create the main directory for zipped files
-          mkdir -p Zipped-Code
-
-          # Read submodules.txt
-          while IFS= read -r line; do
-            if [[ "$line" =~ \[submodule\ \"(.*)\"\] ]]; then
-              module_name="${BASH_REMATCH[1]}"
-
-              # Read path, url, and folder lines
-              read -r path_line
-              path=$(echo "$path_line" | sed -e 's/^[[:space:]]*path[[:space:]]*=[[:space:]]*//')
-              read -r url_line
-              url=$(echo "$url_line" | sed -e 's/^[[:space:]]*url[[:space:]]*=[[:space:]]*//')
-
-              # Read optional branch and folder lines
-              read -r branch_or_folder_line
-              branch=""
-              if [[ "$branch_or_folder_line" =~ "branch" ]]; then
-                branch=$(echo "$branch_or_folder_line" | sed -e 's/^[[:space:]]*branch[[:space:]]*=[[:space:]]*//')
-                read -r folder_line
-                folder=$(echo "$folder_line" | sed -e 's/^[[:space:]]*Folder[[:space:]]*=[[:space:]]*//')
-              else
-                folder=$(echo "$branch_or_folder_line" | sed -e 's/^[[:space:]]*Folder[[:space:]]*=[[:space:]]*//')
-              fi
-
-              echo "📦 Processing submodule: $module_name"
-              echo "    Path: $path"
-              echo "    URL: $url"
-              echo "    Branch: ${branch:-default}"
-              echo "    Destination Folder: $folder"
-
-              temp_dir="temp_clone"
-              rm -rf "$temp_dir"
-
-              # Clone branch if it exists, otherwise fallback to default branch
-              if [ -n "$branch" ]; then
-                if git ls-remote --heads "$url" "$branch" | grep -q "$branch"; then
-                  git clone --depth 1 --branch "$branch" "$url" "$temp_dir"
-                else
-                  echo "Warning: Branch '$branch' not found, cloning default branch instead."
-                  git clone --depth 1 "$url" "$temp_dir"
-                fi
-              else
-                git clone --depth 1 "$url" "$temp_dir"
-              fi
-
-              # Verify clone succeeded
-              if [ ! -d "$temp_dir" ]; then
-                echo "Error: git clone failed for $url"
-                exit 1
-              fi
-
-              # Zip the module contents (exclude .git folder)
-              temp_zip_file="temp_zip_file_$(date +%s).zip"
-              zip -r "$temp_zip_file" "$temp_dir" -x "*.git*" > /dev/null
-
-              # Create destination folder
-              mkdir -p "$folder"
-
-              # Move zip file to destination
-              mv "$temp_zip_file" "$folder/$(basename "$module_name").zip"
-
-              # Clean up
-              rm -rf "$temp_dir"
-
-              echo "✅ Successfully zipped $module_name"
-              echo "---------------------------------------"
-            fi
-          done < Zipped-Code/submodules.txt
-
-      - name: Upload Zipped Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: zipped-submodules
-          path: Zipped-Code/
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        fetch-depth: 0
+    
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.x'
+    
+    - name: Parse submodules and create zip files
+      run: |
+        python3 << 'EOF'
+        import re
+        import os
+        import subprocess
+        import json
+        from urllib.parse import urlparse
+        
+        def parse_submodules(file_path):
+            submodules = []
+            current_submodule = {}
+            
+            with open(file_path, 'r') as f:
+                content = f.read()
+            
+            # Split by submodule sections
+            sections = re.split(r'\[submodule "([^"]+)"\]', content)[1:]  # Skip first empty element
+            
+            for i in range(0, len(sections), 2):
+                if i + 1 < len(sections):
+                    name = sections[i]
+                    config = sections[i + 1]
+                    
+                    submodule = {'name': name}
+                    
+                    # Extract path
+                    path_match = re.search(r'path\s*=\s*(.+)', config)
+                    if path_match:
+                        submodule['path'] = path_match.group(1).strip()
+                    
+                    # Extract url
+                    url_match = re.search(r'url\s*=\s*(.+)', config)
+                    if url_match:
+                        url = url_match.group(1).strip()
+                        # Remove backticks if present
+                        url = url.strip('`')
+                        submodule['url'] = url
+                    
+                    # Extract branch
+                    branch_match = re.search(r'branch\s*=\s*(.+)', config)
+                    if branch_match:
+                        submodule['branch'] = branch_match.group(1).strip()
+                    
+                    # Extract folder
+                    folder_match = re.search(r'Folder\s*=\s*(.+)', config)
+                    if folder_match:
+                        submodule['folder'] = folder_match.group(1).strip()
+                    
+                    if 'url' in submodule and 'folder' in submodule:
+                        submodules.append(submodule)
+            
+            return submodules
+        
+        def get_unique_submodules(submodules):
+            # Create a dictionary to track unique combinations of url+branch+folder
+            unique_dict = {}
+            
+            for sub in submodules:
+                # Skip relative URLs (like ../openthread.git)
+                if sub['url'].startswith('../'):
+                    print(f"Skipping relative URL: {sub['url']}")
+                    continue
+                    
+                branch = sub.get('branch', 'main')
+                key = f"{sub['url']}#{branch}#{sub['folder']}"
+                
+                if key not in unique_dict:
+                    unique_dict[key] = sub
+            
+            return list(unique_dict.values())
+        
+        # Parse submodules
+        submodules = parse_submodules('submodules.txt')
+        unique_submodules = get_unique_submodules(submodules)
+        
+        print(f"Found {len(unique_submodules)} unique submodules to process")
+        
+        # Process each unique submodule
+        for i, submodule in enumerate(unique_submodules):
+            print(f"\nProcessing {i+1}/{len(unique_submodules)}: {submodule['name']}")
+            print(f"URL: {submodule['url']}")
+            print(f"Folder: {submodule['folder']}")
+            
+            # Extract repo name from URL
+            parsed_url = urlparse(submodule['url'])
+            repo_name = os.path.basename(parsed_url.path).replace('.git', '')
+            
+            # Clone the repository
+            clone_dir = f"temp_clone_{i}"
+            branch = submodule.get('branch', 'main')
+            
+            try:
+                # Clone with specific branch if specified
+                if 'branch' in submodule:
+                    clone_cmd = f"git clone --depth 1 --branch {branch} {submodule['url']} {clone_dir}"
+                else:
+                    clone_cmd = f"git clone --depth 1 {submodule['url']} {clone_dir}"
+                
+                result = subprocess.run(clone_cmd, shell=True, capture_output=True, text=True)
+                if result.returncode != 0:
+                    print(f"Failed to clone {submodule['url']}: {result.stderr}")
+                    continue
+                
+                # Create the target directory structure
+                target_dir = f"Zipped-Code/{submodule['folder']}"
+                os.makedirs(target_dir, exist_ok=True)
+                
+                # Create zip file
+                zip_filename = f"{repo_name}.zip"
+                zip_path = os.path.join(target_dir, zip_filename)
+                
+                # Zip the cloned repository (excluding .git folder)
+                zip_cmd = f"cd {clone_dir} && zip -r ../{zip_path} . -x '*.git*'"
+                result = subprocess.run(zip_cmd, shell=True, capture_output=True, text=True)
+                
+                if result.returncode == 0:
+                    print(f"Successfully created: {zip_path}")
+                else:
+                    print(f"Failed to create zip: {result.stderr}")
+                
+                # Clean up clone directory
+                subprocess.run(f"rm -rf {clone_dir}", shell=True)
+                
+            except Exception as e:
+                print(f"Error processing {submodule['name']}: {str(e)}")
+                # Clean up on error
+                subprocess.run(f"rm -rf {clone_dir}", shell=True)
+                continue
+        
+        print("\nCompleted processing all submodules")
+        EOF
+    
+    - name: Commit and push zipped files
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        
+        # Add all new zip files
+        git add Zipped-Code/
+        
+        # Check if there are changes to commit
+        if git diff --staged --quiet; then
+          echo "No changes to commit"
+        else
+          git commit -m "Add zipped submodules [skip ci]"
+          git push
+        fi
