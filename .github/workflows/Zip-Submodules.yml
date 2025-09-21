@@ -16,7 +16,7 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
-        token: ${{ secrets.GITHUB_TOKEN }}
+        token: ${{ secrets.PAT_TOKEN }}
         fetch-depth: 0
     
     - name: Setup Python
@@ -29,7 +29,7 @@ jobs:
         # Install and setup Git LFS
         git lfs install
         
-        # Configure Git LFS to track zip files over 50MB
+        # Configure Git LFS to track zip files
         git lfs track "*.zip"
         git lfs track "Zipped-Code/**/*.zip"
         
@@ -311,7 +311,7 @@ jobs:
                     return False
                 
                 # Push to remote with LFS
-                print(f"   🚀 Pushing to remote (this may take longer for large files)...")
+                print(f"   🚀 Pushing to remote with PAT token (this may take longer for large files)...")
                 result = subprocess.run(['git', 'push'], capture_output=True, text=True, timeout=600)  # 10 min timeout for large files
                 if result.returncode != 0:
                     print(f"   ⚠️  Failed to push: {result.stderr}")
@@ -431,7 +431,7 @@ jobs:
         
         # Main execution
         try:
-            print("🎯 Starting submodule processing with immediate commits...")
+            print("🎯 Starting submodule processing with immediate commits using PAT token...")
             
             # Parse submodules
             submodules = parse_submodules('Zipped-Code/submodules.txt')
@@ -481,18 +481,16 @@ jobs:
         
         EOF
     
-    - name: Commit and push zipped files
+    - name: Final commit and push any remaining files
       run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        
-        # Add all new zip files
-        git add Zipped-Code/
+        # Add any remaining files that might not have been committed individually
+        git add Zipped-Code/ .gitattributes || true
         
         # Check if there are changes to commit
-        if git diff --staged --quiet; then
-          echo "No changes to commit"
-        else
-          git commit -m "Add zipped submodules [skip ci]"
+        if ! git diff --staged --quiet; then
+          echo "📦 Committing any remaining files..."
+          git commit -m "Final commit: Add any remaining zipped submodules [skip ci]"
           git push
+        else
+          echo "✅ No additional changes to commit - all files were committed individually"
         fi
