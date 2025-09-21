@@ -95,8 +95,8 @@ jobs:
             
             return list(unique_dict.values())
         
-        # Parse submodules
-        submodules = parse_submodules('submodules.txt')
+        # Parse submodules from the correct path
+        submodules = parse_submodules('Zipped-Code/submodules.txt')
         unique_submodules = get_unique_submodules(submodules)
         
         print(f"Found {len(unique_submodules)} unique submodules to process")
