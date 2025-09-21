@@ -81,9 +81,9 @@ jobs:
                             if proc.info['cmdline'] and any('clone' in str(cmd).lower() for cmd in proc.info['cmdline']):
                                 print(f"    🔪 Killing git process: {proc.info['pid']}")
                                 proc.kill()
-                        except:
-                            pass
-            except:
+                    except Exception:
+                        pass
+            except Exception:
                 pass
             
             # Clean up temporary directories
@@ -95,20 +95,20 @@ jobs:
                             item_path = os.path.join(temp_dir, item)
                             if os.path.isdir(item_path) and ('git' in item.lower() or 'clone' in item.lower()):
                                 shutil.rmtree(item_path, ignore_errors=True)
-                    except:
+                    except Exception:
                         pass
             
             # Force garbage collection
             try:
                 subprocess.run(['python3', '-c', 'import gc; gc.collect()'], 
                              timeout=10, capture_output=True)
-            except:
+            except Exception:
                 pass
             
             # Clear system caches if possible
             try:
                 subprocess.run(['sync'], timeout=10, capture_output=True)
-            except:
+            except Exception:
                 pass
         
         def clone_with_fallback(url, clone_dir, preferred_branch=None, timeout=300):
@@ -164,11 +164,11 @@ jobs:
                                     default_branch = branch
                                     print(f"    📍 Found branch: {branch}")
                                     break
-                            except:
+                            except Exception:
                                 continue
                         else:
                             default_branch = None
-            except:
+            except Exception:
                 default_branch = None
             
             # Try clone without branch specification (gets default)
