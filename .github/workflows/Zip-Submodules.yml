@@ -3,7 +3,7 @@ name: Zip Submodules
 on:
   push:
     paths:
-      - 'submodules.txt'
+      - 'Zipped-Code/submodules.txt'
   workflow_dispatch:
 
 jobs:
@@ -103,6 +103,11 @@ jobs:
         def clone_with_fallback(url, clone_dir, preferred_branch=None, timeout=300):
             """Clone repository with branch fallback logic"""
             print(f"📥 Step 1: Cloning repository...")
+            
+            # Skip relative URLs for now
+            if url.startswith('../'):
+                print(f"    ⏭️  Skipping relative URL: {url}")
+                return None
             
             # Clean up any existing directory
             if os.path.exists(clone_dir):
@@ -248,7 +253,6 @@ jobs:
         # Main processing logic
         submodules_file = "Zipped-Code/submodules.txt"
         
- 
         if not os.path.exists(submodules_file):
             print(f"❌ {submodules_file} not found!")
             print(f"📍 Current working directory: {os.getcwd()}")
@@ -261,30 +265,55 @@ jobs:
                     print(f"   - {item}")
             exit(1)
         
-        # Read and parse submodules
+        # Read and parse submodules (.gitmodules format)
         with open(submodules_file, 'r') as f:
-            lines = [line.strip() for line in f if line.strip() and not line.startswith('#')]
+            content = f.read()
         
-        # Extract unique submodules
+        # Parse .gitmodules format
         unique_submodules = {}
-        for line in lines:
-            parts = line.split()
-            if len(parts) >= 3:
-                path = parts[0]
-                url = parts[1]
-                branch = parts[2] if len(parts) > 2 else 'main'
+        current_submodule = {}
+        
+        for line in content.split('\n'):
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
                 
-                # Extract repository name from URL
-                repo_name = url.split('/')[-1].replace('.git', '')
+            if line.startswith('[submodule '):
+                # Save previous submodule if complete
+                if current_submodule and 'path' in current_submodule and 'url' in current_submodule:
+                    path = current_submodule['path']
+                    if path not in unique_submodules:
+                        # Extract repository name from URL
+                        repo_name = current_submodule['url'].split('/')[-1].replace('.git', '')
+                        unique_submodules[path] = {
+                            'path': path,
+                            'url': current_submodule['url'],
+                            'branch': current_submodule.get('branch', 'main'),
+                            'repo_name': repo_name,
+                            'folder': current_submodule.get('Folder', path)
+                        }
                 
-                # Use path as the key for uniqueness
-                if path not in unique_submodules:
-                    unique_submodules[path] = {
-                        'path': path,
-                        'url': url,
-                        'branch': branch,
-                        'repo_name': repo_name
-                    }
+                # Start new submodule
+                current_submodule = {}
+                
+            elif '=' in line:
+                key, value = line.split('=', 1)
+                key = key.strip()
+                value = value.strip()
+                current_submodule[key] = value
+        
+        # Don't forget the last submodule
+        if current_submodule and 'path' in current_submodule and 'url' in current_submodule:
+            path = current_submodule['path']
+            if path not in unique_submodules:
+                repo_name = current_submodule['url'].split('/')[-1].replace('.git', '')
+                unique_submodules[path] = {
+                    'path': path,
+                    'url': current_submodule['url'],
+                    'branch': current_submodule.get('branch', 'main'),
+                    'repo_name': repo_name,
+                    'folder': current_submodule.get('Folder', path)
+                }
         
         print(f"📋 Found {len(unique_submodules)} unique submodules to process")
         
@@ -307,6 +336,7 @@ jobs:
             print(f"📂 Path: {info['path']}")
             print(f"🌐 URL: {info['url']}")
             print(f"🌿 Branch: {info['branch']}")
+            print(f"📁 Folder: {info['folder']}")
             print(f"{'='*60}")
             
             # Check resources before each submodule
@@ -318,8 +348,8 @@ jobs:
                     print(f"❌ Still insufficient resources, skipping remaining submodules")
                     break
             
-            # Create zip file path
-            zip_path = f"Zipped-Code/{info['path']}/{info['repo_name']}.zip"
+            # Create zip file path using the folder structure
+            zip_path = f"Zipped-Code/{info['folder']}/{info['repo_name']}.zip"
             
             # Check if zip file already exists
             if os.path.exists(zip_path):
