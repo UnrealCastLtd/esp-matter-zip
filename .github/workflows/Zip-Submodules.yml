@@ -5,7 +5,7 @@ on:
   push:
     branches: [ main ]
     paths:
-      - 'submodules.txt'
+      - 'Zipped-Code/submodules.txt'
 
 jobs:
   zip-submodules:
@@ -54,6 +54,7 @@ jobs:
         import time
         import shutil
         import signal
+        import psutil
         from pathlib import Path
         
         def get_system_resources():
@@ -62,11 +63,25 @@ jobs:
             disk_free_gb = disk_usage.free // (1024**3)
             disk_used_percent = (disk_usage.used / disk_usage.total) * 100
             
-            return disk_free_gb, disk_used_percent
+            memory = psutil.virtual_memory()
+            memory_available_gb = memory.available // (1024**3)
+            
+            return disk_free_gb, disk_used_percent, memory_available_gb
         
         def aggressive_cleanup():
             """Perform aggressive cleanup of temporary files and processes"""
             print("🧹 Performing aggressive cleanup...")
+            
+            # Kill any lingering git processes
+            try:
+                for proc in psutil.process_iter(['pid', 'name']):
+                    if 'git' in proc.info['name'].lower():
+                        try:
+                            proc.kill()
+                        except:
+                            pass
+            except:
+                pass
             
             # Clean up temporary directories
             temp_dirs = ['/tmp', '/var/tmp']
@@ -240,201 +255,165 @@ jobs:
                 print(f"    ⚠️  Unexpected error: {e}")
                 return False
         
-        def parse_gitmodules_format(file_path):
-            """Parse .gitmodules format file and extract submodule information"""
-            submodules = {}
-            current_submodule = None
-            
-            with open(file_path, 'r', encoding='utf-8') as f:
-                for line_num, line in enumerate(f, 1):
-                    line = line.strip()
-                    
-                    # Skip empty lines and comments
-                    if not line or line.startswith('#'):
-                        continue
-                    
-                    # Check for submodule section header
-                    if line.startswith('[submodule '):
-                        # Extract submodule name from [submodule "name"]
-                        try:
-                            start_quote = line.index('"') + 1
-                            end_quote = line.rindex('"')
-                            current_submodule = line[start_quote:end_quote]
-                            submodules[current_submodule] = {}
-                        except ValueError:
-                            print(f"    ⚠️  Warning: Invalid submodule header at line {line_num}: {line}")
-                            current_submodule = None
-                        continue
-                    
-                    # Parse key = value pairs
-                    if current_submodule and '=' in line:
-                        try:
-                            key, value = line.split('=', 1)
-                            key = key.strip()
-                            value = value.strip()
-                            submodules[current_submodule][key] = value
-                        except ValueError:
-                            print(f"    ⚠️  Warning: Invalid key-value pair at line {line_num}: {line}")
-            
-            return submodules
-        
         # Main processing logic
         submodules_file = "submodules.txt"
         
         if not os.path.exists(submodules_file):
             print(f"❌ Error: {submodules_file} not found")
-            print("📁 Current directory contents:")
-            for item in os.listdir('.'):
-                print(f"    {item}")
             exit(1)
         
-        # Parse submodules using .gitmodules format
-        print(f"📖 Parsing {submodules_file}...")
-        parsed_submodules = parse_gitmodules_format(submodules_file)
-        print(f"📊 Parsed {len(parsed_submodules)} submodule entries")
+        # Read and parse submodules
+        with open(submodules_file, 'r') as f:
+            lines = [line.strip() for line in f if line.strip() and not line.startswith('#')]
         
-        # Extract unique HTTP/HTTPS submodules
+        # Extract unique submodules
         unique_submodules = {}
-        skipped_count = 0
-        
-        for name, config in parsed_submodules.items():
-            url = config.get('url', '')
-            path = config.get('path', '')
-            branch = config.get('branch', None)
-            folder = config.get('Folder', '')
-            
-            # Skip if no URL or path
-            if not url or not path:
-                print(f"    ⚠️  Skipping {name}: missing URL or path")
-                skipped_count += 1
-                continue
-            
-            # Skip relative URLs (like ../openthread.git)
-            if url.startswith('../') or url.startswith('./') or not url.startswith(('http://', 'https://')):
-                print(f"    ⚠️  Skipping {name}: relative or non-HTTP URL: {url}")
-                skipped_count += 1
-                continue
-            
-            # Extract repository name from URL
-            repo_name = url.rstrip('/').split('/')[-1]
-            if repo_name.endswith('.git'):
-                repo_name = repo_name[:-4]
-            
-            # Use URL as key to avoid duplicates
-            if url not in unique_submodules:
-                unique_submodules[url] = {
-                    'name': name,
-                    'path': path,
-                    'url': url,
-                    'branch': branch,
-                    'folder': folder,
-                    'repo_name': repo_name
-                }
+        for line in lines:
+            parts = line.split()
+            if len(parts) >= 3:
+                path = parts[0]
+                url = parts[1]
+                branch = parts[2] if len(parts) > 2 else None
+                
+                # Extract repository name from URL
+                repo_name = url.rstrip('/').split('/')[-1]
+                if repo_name.endswith('.git'):
+                    repo_name = repo_name[:-4]
+                
+                # Use URL as key to avoid duplicates
+                if url not in unique_submodules:
+                    unique_submodules[url] = {
+                        'path': path,
+                        'url': url,
+                        'branch': branch,
+                        'repo_name': repo_name
+                    }
         
         total_submodules = len(unique_submodules)
-        print(f"📊 Found {total_submodules} unique HTTP/HTTPS submodules to process")
-        print(f"📊 Skipped {skipped_count} submodules (relative URLs or missing data)")
-        
-        # Check if zip already exists and skip if it does
-        processed_count = 0
-        skipped_existing = 0
+        print(f"📊 Found {total_submodules} unique submodules to process")
         
         # Initial resource check
-        disk_free, disk_used_pct = get_system_resources()
+        disk_free, disk_used_pct, memory_available = get_system_resources()
         print(f"💾 Disk: {disk_free}G available ({disk_used_pct:.0f}% used)")
+        print(f"🧠 Memory: {memory_available}Gi available")
         
         # Process each submodule
         successful_count = 0
         failed_count = 0
+        skipped_count = 0
         
-        for i, (url, submodule) in enumerate(unique_submodules.items(), 1):
-            repo_name = submodule['repo_name']
-            branch = submodule['branch']
-            folder = submodule['folder']
+        for i, (url, info) in enumerate(unique_submodules.items(), 1):
+            print(f"\n{'='*80}")
+            print(f"🚀 PROCESSING {i}/{total_submodules}: {info['path']}")
+            print(f"📍 URL: {info['url']}")
+            print(f"📁 Folder: {info['path']}")
+            if info['branch']:
+                print(f"🌿 Preferred Branch: {info['branch']}")
+            print(f"{'='*80}")
             
-            progress_info = f"({i}/{total_submodules})"
-            print(f"\n🔄 Processing {repo_name} {progress_info}")
-            print(f"    📍 URL: {url}")
-            if branch:
-                print(f"    🌿 Branch: {branch}")
-            if folder:
-                print(f"    📁 Target folder: {folder}")
+            # Create zip file path
+            zip_path = f"Zipped-Code/{info['path']}/{info['repo_name']}.zip"
             
-            # Determine zip file path
-            if folder:
-                zip_path = f"Zipped-Code/{folder}/{repo_name}.zip"
-            else:
-                zip_path = f"Zipped-Code/{repo_name}.zip"
-            
-            # Check if zip already exists
+            # Check if zip file already exists
             if os.path.exists(zip_path):
-                print(f"    ✅ Zip already exists: {zip_path}")
-                skipped_existing += 1
+                size_mb = os.path.getsize(zip_path) / (1024 * 1024)
+                print(f"✅ SKIPPED: {info['path']} - Zip file already exists ({size_mb:.2f} MB)")
+                print(f"📦 Existing file: {zip_path}")
+                skipped_count += 1
                 continue
             
-            clone_dir = f"temp_clone_{repo_name}_{int(time.time())}"
+            # Aggressive cleanup before each submodule
+            aggressive_cleanup()
+            
+            # Resource check
+            disk_free, disk_used_pct, memory_available = get_system_resources()
+            print(f"💾 Disk: {disk_free}G available ({disk_used_pct:.0f}% used)")
+            print(f"🧠 Memory: {memory_available}Gi available")
+            
+            # Check if we have enough resources
+            if disk_free < 2:  # Less than 2GB free
+                print(f"⚠️  Warning: Low disk space ({disk_free}G), performing extra cleanup...")
+                aggressive_cleanup()
+                time.sleep(5)
+            
+            # Create unique temporary directory for this submodule
+            temp_clone_dir = f"/tmp/clone_{i}_{int(time.time())}"
             
             try:
-                # Step 1: Clone repository
-                used_branch = clone_with_fallback(url, clone_dir, branch)
-                if not used_branch:
-                    print(f"❌ Failed to clone {repo_name}")
+                # Clone repository
+                branch_used = clone_with_fallback(info['url'], temp_clone_dir, info['branch'])
+                
+                if branch_used is None:
+                    print(f"❌ FAILED: {info['path']} - Clone failed")
                     failed_count += 1
                     continue
                 
-                # Step 2: Create zip file
-                size_mb = create_zip_file(clone_dir, zip_path)
+                # Create zip file
+                size_mb = create_zip_file(temp_clone_dir, zip_path)
                 
-                # Step 3: Clean up clone directory immediately
-                print(f"🧹 Step 3: Cleaning up clone directory...")
-                if os.path.exists(clone_dir):
-                    shutil.rmtree(clone_dir, ignore_errors=True)
+                # Cleanup temporary clone directory immediately
+                print(f"🧹 Step 3: Cleanup temporary files...")
+                if os.path.exists(temp_clone_dir):
+                    shutil.rmtree(temp_clone_dir, ignore_errors=True)
                 
-                # Step 4: Commit and push immediately
-                if commit_and_push_file(zip_path, repo_name, progress_info):
-                    successful_count += 1
-                    print(f"✅ Successfully processed {repo_name} ({size_mb:.2f} MB)")
-                else:
-                    failed_count += 1
-                    print(f"❌ Failed to push {repo_name}")
+                # Additional aggressive cleanup
+                aggressive_cleanup()
                 
-                processed_count += 1
+                # Commit and push the zip file
+                progress_info = f"Progress {i}/{total_submodules}"
+                push_success = commit_and_push_file(zip_path, info['repo_name'], progress_info)
                 
-                # Resource management
-                if processed_count % 5 == 0:
-                    aggressive_cleanup()
-                    disk_free, disk_used_pct = get_system_resources()
-                    print(f"💾 Resources after {processed_count} processed: {disk_free}G free ({disk_used_pct:.0f}% used)")
+                if not push_success:
+                    print(f"⚠️  Warning: Failed to commit/push, but zip file was created")
                 
-                # Stop if disk space is critically low
-                if disk_free < 2:
-                    print(f"⚠️  Critical: Only {disk_free}G disk space remaining. Stopping processing.")
-                    break
+                print(f"🧹 Final cleanup...")
+                aggressive_cleanup()
+                
+                print(f"✅ SUCCESS: {info['path']}")
+                successful_count += 1
                 
             except Exception as e:
-                print(f"❌ Error processing {repo_name}: {e}")
+                print(f"❌ FAILED: {info['path']} - {str(e)}")
                 failed_count += 1
                 
-                # Clean up on error
-                if os.path.exists(clone_dir):
-                    shutil.rmtree(clone_dir, ignore_errors=True)
-                if os.path.exists(zip_path):
-                    os.remove(zip_path)
+                # Cleanup on failure
+                if os.path.exists(temp_clone_dir):
+                    shutil.rmtree(temp_clone_dir, ignore_errors=True)
+                aggressive_cleanup()
             
-            # Small delay between operations
-            time.sleep(1)
+            # Progress update
+            print(f"📈 Progress: {i}/{total_submodules} ({successful_count} successful, {failed_count} failed, {skipped_count} skipped)")
+            
+            # Brief pause between submodules to prevent overwhelming the system
+            if i < total_submodules:
+                print(f"⏸️  Brief pause before next submodule...")
+                time.sleep(2)
+        
+        # Final summary
+        print(f"\n{'='*80}")
+        print(f"🎉 PROCESSING COMPLETE!")
+        print(f"📊 Total: {total_submodules}")
+        print(f"✅ Successful: {successful_count}")
+        print(f"⏭️  Skipped: {skipped_count}")
+        print(f"❌ Failed: {failed_count}")
+        print(f"📈 Success Rate: {((successful_count + skipped_count)/total_submodules)*100:.1f}%")
+        print(f"{'='*80}")
         
         # Final cleanup
         aggressive_cleanup()
         
-        # Summary
-        print(f"\n📊 Processing Summary:")
-        print(f"    ✅ Successful: {successful_count}")
-        print(f"    ⏭️  Skipped (existing): {skipped_existing}")
-        print(f"    ❌ Failed: {failed_count}")
-        print(f"    📊 Total processed: {processed_count}")
-        print(f"    📊 Total unique submodules: {total_submodules}")
-        
-        if failed_count > 0:
-            exit(1)
       shell: python
+
+    - name: Final commit and push
+      run: |
+        # Add any remaining files
+        git add .
+        
+        # Check if there are any changes to commit
+        if ! git diff --staged --quiet; then
+          git commit -m "Final batch of zipped submodules [skip ci]"
+          git push origin HEAD
+          echo "✅ Final commit pushed successfully"
+        else
+          echo "ℹ️  No additional changes to commit"
+        fi
