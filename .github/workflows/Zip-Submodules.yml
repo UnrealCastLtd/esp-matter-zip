@@ -57,7 +57,7 @@ jobs:
         import time
         import sys
         from urllib.parse import urlparse
-        
+
         def parse_submodules(file_path):
             submodules = []
             
@@ -101,7 +101,7 @@ jobs:
                         submodules.append(submodule)
             
             return submodules
-        
+
         def get_unique_submodules(submodules):
             # Create a dictionary to track unique combinations of url+branch+folder
             unique_dict = {}
@@ -119,7 +119,7 @@ jobs:
                     unique_dict[key] = sub
             
             return list(unique_dict.values())
-        
+
         def aggressive_cleanup():
             """Ultra-aggressive cleanup with multiple attempts"""
             print("🧹 Performing aggressive cleanup...")
@@ -131,7 +131,7 @@ jobs:
             # Remove all temporary files and directories
             cleanup_commands = [
                 "rm -rf temp_clone* || true",
-                "rm -rf *.zip || true", 
+                "rm -rf *.zip || true",
                 "rm -rf .git/objects/pack/tmp_* || true",
                 "find . -name '*.tmp' -delete || true",
                 "find . -name 'core.*' -delete || true"
@@ -146,7 +146,7 @@ jobs:
             gc.collect()
             
             return True
-        
+
         def check_resources():
             """Check system resources"""
             try:
@@ -166,331 +166,239 @@ jobs:
                     if len(lines) > 1:
                         fields = lines[1].split()
                         if len(fields) >= 3:
-                            print(f"🧠 Memory: {fields[6] if len(fields) > 6 else fields[3]} available")
+                            print(f"🧠 Memory: {fields[6]} available")
                             
             except Exception as e:
                 print(f"Resource check failed: {e}")
-        
-        def get_default_branch(repo_url):
-            """Get the default branch of a repository"""
+
+        def clone_repository(url, branch, folder, clone_dir):
+            """Clone repository with fallback logic"""
+            print(f"📥 Cloning {url} (branch: {branch}) to {clone_dir}")
+            
+            # Clean up any existing directory
+            if os.path.exists(clone_dir):
+                shutil.rmtree(clone_dir, ignore_errors=True)
+            
+            # Try with specified branch first
+            if branch and branch != 'main':
+                try:
+                    result = subprocess.run([
+                        'git', 'clone', '--depth=1', '--single-branch', 
+                        '--branch', branch, url, clone_dir
+                    ], timeout=300, capture_output=True, text=True)
+                    
+                    if result.returncode == 0:
+                        print(f"✅ Successfully cloned with branch: {branch}")
+                        return True
+                    else:
+                        print(f"⚠️ Branch {branch} not found, trying fallback...")
+                except subprocess.TimeoutExpired:
+                    print(f"⚠️ Timeout cloning branch {branch}, trying fallback...")
+                except Exception as e:
+                    print(f"⚠️ Error cloning branch {branch}: {e}")
+            
+            # Clean up failed attempt
+            if os.path.exists(clone_dir):
+                shutil.rmtree(clone_dir, ignore_errors=True)
+            
+            # Try without branch (gets default branch)
             try:
-                # Use git ls-remote to get the default branch
-                result = subprocess.run(
-                    ['git', 'ls-remote', '--symref', repo_url, 'HEAD'],
-                    capture_output=True, text=True, timeout=30
-                )
+                result = subprocess.run([
+                    'git', 'clone', '--depth=1', url, clone_dir
+                ], timeout=300, capture_output=True, text=True)
                 
                 if result.returncode == 0:
-                    lines = result.stdout.strip().split('\n')
-                    for line in lines:
-                        if line.startswith('ref: refs/heads/'):
-                            return line.split('/')[-1]
-                
-                # Fallback: try common default branch names
-                common_branches = ['main', 'master', 'develop', 'dev']
-                for branch in common_branches:
-                    result = subprocess.run(
-                        ['git', 'ls-remote', '--heads', repo_url, branch],
-                        capture_output=True, text=True, timeout=15
-                    )
-                    if result.returncode == 0 and result.stdout.strip():
-                        return branch
-                        
-            except Exception as e:
-                print(f"   Warning: Could not determine default branch: {e}")
-            
-            return 'main'  # Final fallback
-        
-        def clone_with_fallback(repo_url, clone_dir, preferred_branch=None):
-            """Clone repository with branch fallback logic"""
-            
-            # Clean URL (remove backticks)
-            clean_url = repo_url.strip('`')
-            
-            # Try preferred branch first if specified
-            if preferred_branch:
-                print(f"   Trying preferred branch: {preferred_branch}")
-                clone_cmd = [
-                    'timeout', '300',
-                    'git', 'clone', 
-                    '--depth', '1', 
-                    '--single-branch', 
-                    '--branch', preferred_branch,
-                    '--config', 'core.longpaths=true',
-                    clean_url, 
-                    clone_dir
-                ]
-                
-                result = subprocess.run(clone_cmd, capture_output=True, text=True, timeout=320)
-                if result.returncode == 0:
-                    print(f"   ✅ Successfully cloned with branch: {preferred_branch}")
-                    return True, preferred_branch
-                else:
-                    print(f"   ⚠️  Branch '{preferred_branch}' not found, trying fallback...")
-            
-            # Get default branch and try it
-            print(f"   🔍 Finding default branch...")
-            default_branch = get_default_branch(clean_url)
-            print(f"   📍 Default branch detected: {default_branch}")
-            
-            # Try default branch
-            clone_cmd = [
-                'timeout', '300',
-                'git', 'clone', 
-                '--depth', '1', 
-                '--single-branch', 
-                '--branch', default_branch,
-                '--config', 'core.longpaths=true',
-                clean_url, 
-                clone_dir
-            ]
-            
-            result = subprocess.run(clone_cmd, capture_output=True, text=True, timeout=320)
-            if result.returncode == 0:
-                print(f"   ✅ Successfully cloned with default branch: {default_branch}")
-                return True, default_branch
-            
-            # Final fallback: clone without specifying branch
-            print(f"   🔄 Trying clone without branch specification...")
-            clone_cmd = [
-                'timeout', '300',
-                'git', 'clone', 
-                '--depth', '1',
-                '--config', 'core.longpaths=true',
-                clean_url, 
-                clone_dir
-            ]
-            
-            result = subprocess.run(clone_cmd, capture_output=True, text=True, timeout=320)
-            if result.returncode == 0:
-                print(f"   ✅ Successfully cloned without branch specification")
-                return True, "default"
-            else:
-                print(f"   ❌ All clone attempts failed: {result.stderr}")
-                return False, None
-        
-        def check_file_size(file_path):
-            """Check file size and return size in MB"""
-            if os.path.exists(file_path):
-                size_bytes = os.path.getsize(file_path)
-                size_mb = size_bytes / (1024 * 1024)
-                return size_mb
-            return 0
-        
-        def commit_and_push_file(zip_path, submodule_name, index, total):
-            """Commit and push a single zip file immediately with LFS support"""
-            try:
-                print(f"📤 Step 4: Committing and pushing zip file...")
-                
-                # Check file size
-                file_size_mb = check_file_size(zip_path)
-                print(f"   📏 File size: {file_size_mb:.2f} MB")
-                
-                if file_size_mb > 100:
-                    print(f"   📦 Large file detected ({file_size_mb:.2f} MB), using Git LFS")
-                    # Ensure the file is tracked by LFS
-                    subprocess.run(['git', 'lfs', 'track', zip_path], capture_output=True)
-                
-                # Add the specific zip file
-                result = subprocess.run(['git', 'add', zip_path], capture_output=True, text=True)
-                if result.returncode != 0:
-                    print(f"   ⚠️  Failed to add file: {result.stderr}")
-                    return False
-                
-                # Check if there are changes to commit
-                result = subprocess.run(['git', 'diff', '--staged', '--quiet'], capture_output=True)
-                if result.returncode == 0:
-                    print(f"   ℹ️  No changes to commit for {submodule_name}")
+                    print(f"✅ Successfully cloned with default branch")
                     return True
-                
-                # Commit with descriptive message
-                commit_msg = f"Add {submodule_name} zip file ({index}/{total}) - {file_size_mb:.2f}MB [skip ci]"
-                result = subprocess.run(['git', 'commit', '-m', commit_msg], capture_output=True, text=True)
-                if result.returncode != 0:
-                    print(f"   ⚠️  Failed to commit: {result.stderr}")
-                    return False
-                
-                # Push to remote with LFS
-                print(f"   🚀 Pushing to remote with authentication token...")
-                result = subprocess.run(['git', 'push'], capture_output=True, text=True, timeout=600)  # 10 min timeout for large files
-                if result.returncode != 0:
-                    print(f"   ⚠️  Failed to push: {result.stderr}")
-                    return False
-                
-                print(f"   ✅ Successfully committed and pushed: {submodule_name} ({file_size_mb:.2f} MB)")
-                return True
-                
-            except subprocess.TimeoutExpired:
-                print(f"   ⏰ Push timeout - large file may still be uploading")
-                return False
-            except Exception as e:
-                print(f"   ❌ Error during commit/push: {str(e)}")
-                return False
-        
-        def process_single_submodule(submodule, index, total):
-            """Process a single submodule with full isolation"""
-            print(f"\n{'='*80}")
-            print(f"🚀 PROCESSING {index}/{total}: {submodule['name']}")
-            print(f"📍 URL: {submodule['url']}")
-            print(f"📁 Folder: {submodule['folder']}")
-            if 'branch' in submodule:
-                print(f"🌿 Preferred Branch: {submodule['branch']}")
-            print(f"{'='*80}")
-            
-            # Pre-process cleanup
-            aggressive_cleanup()
-            check_resources()
-            
-            # Extract repo name from URL
-            parsed_url = urlparse(submodule['url'].strip('`'))
-            repo_name = os.path.basename(parsed_url.path).replace('.git', '')
-            
-            # Use unique clone directory for this process
-            clone_dir = f"temp_clone_{index}_{int(time.time())}"
-            preferred_branch = submodule.get('branch')
-            
-            try:
-                print(f"📥 Step 1: Cloning repository...")
-                
-                # Ensure clean state
-                if os.path.exists(clone_dir):
-                    shutil.rmtree(clone_dir, ignore_errors=True)
-                    time.sleep(0.5)
-                
-                # Clone with fallback logic
-                success, used_branch = clone_with_fallback(
-                    submodule['url'], 
-                    clone_dir, 
-                    preferred_branch
-                )
-                
-                if not success:
-                    print(f"❌ All clone attempts failed")
-                    return False
-                
-                print(f"✅ Clone successful using branch: {used_branch}")
-                
-                print(f"📦 Step 2: Creating zip file...")
-                
-                # Create target directory
-                target_dir = f"Zipped-Code/{submodule['folder']}"
-                os.makedirs(target_dir, exist_ok=True)
-                
-                # Remove .git directory immediately to save space
-                git_dir = os.path.join(clone_dir, '.git')
-                if os.path.exists(git_dir):
-                    shutil.rmtree(git_dir, ignore_errors=True)
-                
-                # Create zip file with compression
-                zip_filename = f"{repo_name}.zip"
-                zip_path = os.path.join(target_dir, zip_filename)
-                
-                # Use Python's zipfile for better control
-                import zipfile
-                
-                with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as zipf:
-                    for root, dirs, files in os.walk(clone_dir):
-                        for file in files:
-                            file_path = os.path.join(root, file)
-                            arcname = os.path.relpath(file_path, clone_dir)
-                            zipf.write(file_path, arcname)
-                
-                if os.path.exists(zip_path):
-                    size = os.path.getsize(zip_path)
-                    print(f"✅ Zip created: {zip_path} ({size / (1024*1024):.2f} MB)")
                 else:
-                    print(f"❌ Zip creation failed")
+                    print(f"❌ Failed to clone: {result.stderr}")
                     return False
-                
-                print(f"🧹 Step 3: Cleanup temporary files...")
-                # Clean up clone directory before committing
-                if os.path.exists(clone_dir):
-                    shutil.rmtree(clone_dir, ignore_errors=True)
-                aggressive_cleanup()
-                
-                # Commit and push immediately
-                commit_success = commit_and_push_file(zip_path, submodule['name'], index, total)
-                if not commit_success:
-                    print(f"⚠️  Warning: Failed to commit/push, but zip file was created")
-                
-                return True
-                
             except subprocess.TimeoutExpired:
-                print(f"⏰ Timeout occurred while processing {submodule['name']}")
+                print(f"❌ Timeout during clone")
                 return False
             except Exception as e:
-                print(f"❌ Error: {str(e)}")
+                print(f"❌ Error during clone: {e}")
                 return False
-            finally:
-                print(f"🧹 Final cleanup...")
-                # Always cleanup, even on failure
-                if os.path.exists(clone_dir):
-                    shutil.rmtree(clone_dir, ignore_errors=True)
-                aggressive_cleanup()
-                print(f"✅ Cleanup completed")
-        
+
+        def create_zip(source_dir, zip_path, repo_name):
+            """Create zip file from cloned repository"""
+            print(f"📦 Creating zip: {zip_path}")
+            
+            # Create directory if it doesn't exist
+            os.makedirs(os.path.dirname(zip_path), exist_ok=True)
+            
+            # Create zip file
+            shutil.make_archive(zip_path[:-4], 'zip', source_dir)
+            
+            # Check if zip was created and get size
+            if os.path.exists(zip_path):
+                size_mb = os.path.getsize(zip_path) / (1024 * 1024)
+                print(f"✅ Zip created: {zip_path} ({size_mb:.2f} MB)")
+                return True
+            else:
+                print(f"❌ Failed to create zip: {zip_path}")
+                return False
+
+        def commit_and_push_zip(zip_path, repo_name, progress):
+            """Commit and push the zip file"""
+            try:
+                print(f"📤 Committing and pushing {repo_name}...")
+                
+                # Add the zip file
+                subprocess.run(['git', 'add', zip_path], check=True)
+                
+                # Commit
+                commit_msg = f"Add {repo_name} zip - {progress} [skip ci]"
+                subprocess.run(['git', 'commit', '-m', commit_msg], check=True)
+                
+                # Push
+                result = subprocess.run(['git', 'push'], capture_output=True, text=True, timeout=120)
+                
+                if result.returncode == 0:
+                    print(f"✅ Successfully pushed {repo_name}")
+                    return True
+                else:
+                    print(f"⚠️ Push failed: {result.stderr}")
+                    return False
+                    
+            except subprocess.CalledProcessError as e:
+                print(f"⚠️ Git operation failed: {e}")
+                return False
+            except subprocess.TimeoutExpired:
+                print(f"⚠️ Push timeout")
+                return False
+            except Exception as e:
+                print(f"⚠️ Unexpected error: {e}")
+                return False
+
         # Main execution
         try:
-            print("🎯 Starting submodule processing with immediate commits using authentication token...")
+            print("🚀 Starting submodule processing...")
             
-            # Parse submodules
-            submodules = parse_submodules('Zipped-Code/submodules.txt')
+            # Parse submodules file
+            submodules_file = "submodules.txt"
+            if not os.path.exists(submodules_file):
+                print(f"❌ {submodules_file} not found!")
+                sys.exit(1)
+            
+            submodules = parse_submodules(submodules_file)
             unique_submodules = get_unique_submodules(submodules)
             
-            print(f"📊 Found {len(unique_submodules)} unique submodules to process")
+            total = len(unique_submodules)
+            print(f"📊 Found {total} unique submodules to process")
+            
+            # Initial cleanup and resource check
+            aggressive_cleanup()
             check_resources()
             
-            # Initial cleanup
-            aggressive_cleanup()
-            
-            # Process each submodule individually
             successful = 0
             failed = 0
+            skipped = 0
             
             for i, submodule in enumerate(unique_submodules, 1):
-                success = process_single_submodule(submodule, i, len(unique_submodules))
+                print(f"\n{'='*80}")
+                print(f"🚀 Processing {i}/{total}: {submodule['name']}")
+                print(f"📍 URL: {submodule['url']}")
+                print(f"📁 Folder: {submodule['folder']}")
+                print(f"🌿 Branch: {submodule.get('branch', 'default')}")
+                print(f"{'='*80}")
                 
-                if success:
-                    successful += 1
-                    print(f"✅ SUCCESS: {submodule['name']}")
-                else:
+                # Extract repo name from URL
+                repo_name = submodule['url'].rstrip('/').split('/')[-1]
+                if repo_name.endswith('.git'):
+                    repo_name = repo_name[:-4]
+                
+                # Create zip file path
+                zip_path = f"Zipped-Code/{submodule['folder']}/{repo_name}.zip"
+                
+                # Check if zip file already exists
+                if os.path.exists(zip_path):
+                    print(f"⏭️ SKIPPING: {submodule['name']} - Zip file already exists")
+                    print(f"📁 Existing file: {zip_path}")
+                    skipped += 1
+                    continue
+                
+                # Resource check before processing
+                check_resources()
+                
+                # Create temporary clone directory
+                clone_dir = f"temp_clone_{i}_{int(time.time())}"
+                
+                try:
+                    # Clone repository
+                    if clone_repository(submodule['url'], submodule.get('branch'), 
+                                      submodule['folder'], clone_dir):
+                        
+                        # Create zip file
+                        if create_zip(clone_dir, zip_path, repo_name):
+                            
+                            # Cleanup clone directory immediately
+                            print("🧹 Cleaning up clone directory...")
+                            if os.path.exists(clone_dir):
+                                shutil.rmtree(clone_dir, ignore_errors=True)
+                            
+                            # Commit and push
+                            progress = f"{i}/{total}"
+                            if commit_and_push_zip(zip_path, repo_name, progress):
+                                print(f"✅ SUCCESS: {submodule['name']}")
+                                successful += 1
+                            else:
+                                print(f"⚠️ PARTIAL SUCCESS: {submodule['name']} (zip created but not pushed)")
+                                successful += 1
+                        else:
+                            print(f"❌ FAILED: {submodule['name']} - Zip creation failed")
+                            failed += 1
+                    else:
+                        print(f"❌ FAILED: {submodule['name']} - Clone failed")
+                        failed += 1
+                        
+                except Exception as e:
+                    print(f"❌ FAILED: {submodule['name']} - {str(e)}")
                     failed += 1
-                    print(f"❌ FAILED: {submodule['name']}")
+                
+                finally:
+                    # Always cleanup
+                    if os.path.exists(clone_dir):
+                        shutil.rmtree(clone_dir, ignore_errors=True)
+                    aggressive_cleanup()
                 
                 # Progress update
-                print(f"📈 Progress: {i}/{len(unique_submodules)} ({successful} successful, {failed} failed)")
+                print(f"📈 Progress: {i}/{total} (✅{successful} ⏭️{skipped} ❌{failed})")
                 
-                # Brief pause between submodules
-                if i < len(unique_submodules):
-                    print("⏸️  Brief pause before next submodule...")
-                    time.sleep(2)
+                # Brief pause to prevent overwhelming
+                if i < total:
+                    time.sleep(1)
             
+            # Final summary
             print(f"\n{'='*80}")
             print(f"🎉 PROCESSING COMPLETE!")
+            print(f"📊 Total: {total}")
             print(f"✅ Successful: {successful}")
+            print(f"⏭️ Skipped (already exists): {skipped}")
             print(f"❌ Failed: {failed}")
-            print(f"📊 Total: {len(unique_submodules)}")
+            print(f"📈 Success Rate: {((successful + skipped)/total)*100:.1f}%")
             print(f"{'='*80}")
             
-            # Final resource check
-            check_resources()
-            
         except Exception as e:
-            print(f"💥 Fatal error: {str(e)}")
+            print(f"💥 Critical error: {e}")
             sys.exit(1)
         
+        finally:
+            # Final cleanup
+            aggressive_cleanup()
+            
         EOF
-    
-    - name: Final commit and push any remaining files
+
+    - name: Final commit and push
       run: |
-        # Add any remaining files that might not have been committed individually
-        git add Zipped-Code/ .gitattributes || true
+        # Add any remaining files that might not have been committed
+        git add .
         
-        # Check if there are changes to commit
+        # Check if there are any changes to commit
         if ! git diff --staged --quiet; then
-          echo "📦 Committing any remaining files..."
-          git commit -m "Final commit: Add any remaining zipped submodules [skip ci]"
+          git commit -m "Final batch of zipped submodules [skip ci]"
           git push
+          echo "✅ Final commit pushed successfully"
         else
-          echo "✅ No additional changes to commit - all files were committed individually"
+          echo "ℹ️ No additional changes to commit"
         fi
