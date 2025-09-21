@@ -24,6 +24,11 @@ jobs:
       with:
         python-version: '3.x'
     
+    - name: Setup Git configuration
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+    
     - name: Parse submodules and create zip files
       run: |
         python3 << 'EOF'
@@ -247,6 +252,43 @@ jobs:
                 print(f"   ❌ All clone attempts failed: {result.stderr}")
                 return False, None
         
+        def commit_and_push_file(zip_path, submodule_name, index, total):
+            """Commit and push a single zip file immediately"""
+            try:
+                print(f"📤 Step 4: Committing and pushing zip file...")
+                
+                # Add the specific zip file
+                result = subprocess.run(['git', 'add', zip_path], capture_output=True, text=True)
+                if result.returncode != 0:
+                    print(f"   ⚠️  Failed to add file: {result.stderr}")
+                    return False
+                
+                # Check if there are changes to commit
+                result = subprocess.run(['git', 'diff', '--staged', '--quiet'], capture_output=True)
+                if result.returncode == 0:
+                    print(f"   ℹ️  No changes to commit for {submodule_name}")
+                    return True
+                
+                # Commit with descriptive message
+                commit_msg = f"Add {submodule_name} zip file ({index}/{total}) [skip ci]"
+                result = subprocess.run(['git', 'commit', '-m', commit_msg], capture_output=True, text=True)
+                if result.returncode != 0:
+                    print(f"   ⚠️  Failed to commit: {result.stderr}")
+                    return False
+                
+                # Push to remote
+                result = subprocess.run(['git', 'push'], capture_output=True, text=True)
+                if result.returncode != 0:
+                    print(f"   ⚠️  Failed to push: {result.stderr}")
+                    return False
+                
+                print(f"   ✅ Successfully committed and pushed: {submodule_name}")
+                return True
+                
+            except Exception as e:
+                print(f"   ❌ Error during commit/push: {str(e)}")
+                return False
+        
         def process_single_submodule(submodule, index, total):
             """Process a single submodule with full isolation"""
             print(f"\n{'='*80}")
@@ -322,6 +364,17 @@ jobs:
                     print(f"❌ Zip creation failed")
                     return False
                 
+                print(f"🧹 Step 3: Cleanup temporary files...")
+                # Clean up clone directory before committing
+                if os.path.exists(clone_dir):
+                    shutil.rmtree(clone_dir, ignore_errors=True)
+                aggressive_cleanup()
+                
+                # Commit and push immediately
+                commit_success = commit_and_push_file(zip_path, submodule['name'], index, total)
+                if not commit_success:
+                    print(f"⚠️  Warning: Failed to commit/push, but zip file was created")
+                
                 return True
                 
             except subprocess.TimeoutExpired:
@@ -331,7 +384,7 @@ jobs:
                 print(f"❌ Error: {str(e)}")
                 return False
             finally:
-                print(f"🧹 Step 3: Cleanup...")
+                print(f"🧹 Final cleanup...")
                 # Always cleanup, even on failure
                 if os.path.exists(clone_dir):
                     shutil.rmtree(clone_dir, ignore_errors=True)
@@ -340,7 +393,7 @@ jobs:
         
         # Main execution
         try:
-            print("🎯 Starting submodule processing...")
+            print("🎯 Starting submodule processing with immediate commits...")
             
             # Parse submodules
             submodules = parse_submodules('Zipped-Code/submodules.txt')
