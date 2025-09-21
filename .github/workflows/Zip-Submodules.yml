@@ -24,11 +24,28 @@ jobs:
       with:
         python-version: '3.x'
     
-    - name: Setup Git configuration
+    - name: Setup Git LFS and configuration
       run: |
+        # Install and setup Git LFS
+        git lfs install
+        
+        # Configure Git LFS to track zip files over 50MB
+        git lfs track "*.zip"
+        git lfs track "Zipped-Code/**/*.zip"
+        
+        # Add .gitattributes if it doesn't exist or update it
+        git add .gitattributes || true
+        
+        # Setup Git configuration
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
-    
+        
+        # Commit .gitattributes if there are changes
+        if ! git diff --staged --quiet; then
+          git commit -m "Setup Git LFS for zip files [skip ci]"
+          git push
+        fi
+
     - name: Parse submodules and create zip files
       run: |
         python3 << 'EOF'
@@ -252,10 +269,27 @@ jobs:
                 print(f"   ❌ All clone attempts failed: {result.stderr}")
                 return False, None
         
+        def check_file_size(file_path):
+            """Check file size and return size in MB"""
+            if os.path.exists(file_path):
+                size_bytes = os.path.getsize(file_path)
+                size_mb = size_bytes / (1024 * 1024)
+                return size_mb
+            return 0
+        
         def commit_and_push_file(zip_path, submodule_name, index, total):
-            """Commit and push a single zip file immediately"""
+            """Commit and push a single zip file immediately with LFS support"""
             try:
                 print(f"📤 Step 4: Committing and pushing zip file...")
+                
+                # Check file size
+                file_size_mb = check_file_size(zip_path)
+                print(f"   📏 File size: {file_size_mb:.2f} MB")
+                
+                if file_size_mb > 100:
+                    print(f"   📦 Large file detected ({file_size_mb:.2f} MB), using Git LFS")
+                    # Ensure the file is tracked by LFS
+                    subprocess.run(['git', 'lfs', 'track', zip_path], capture_output=True)
                 
                 # Add the specific zip file
                 result = subprocess.run(['git', 'add', zip_path], capture_output=True, text=True)
@@ -270,21 +304,25 @@ jobs:
                     return True
                 
                 # Commit with descriptive message
-                commit_msg = f"Add {submodule_name} zip file ({index}/{total}) [skip ci]"
+                commit_msg = f"Add {submodule_name} zip file ({index}/{total}) - {file_size_mb:.2f}MB [skip ci]"
                 result = subprocess.run(['git', 'commit', '-m', commit_msg], capture_output=True, text=True)
                 if result.returncode != 0:
                     print(f"   ⚠️  Failed to commit: {result.stderr}")
                     return False
                 
-                # Push to remote
-                result = subprocess.run(['git', 'push'], capture_output=True, text=True)
+                # Push to remote with LFS
+                print(f"   🚀 Pushing to remote (this may take longer for large files)...")
+                result = subprocess.run(['git', 'push'], capture_output=True, text=True, timeout=600)  # 10 min timeout for large files
                 if result.returncode != 0:
                     print(f"   ⚠️  Failed to push: {result.stderr}")
                     return False
                 
-                print(f"   ✅ Successfully committed and pushed: {submodule_name}")
+                print(f"   ✅ Successfully committed and pushed: {submodule_name} ({file_size_mb:.2f} MB)")
                 return True
                 
+            except subprocess.TimeoutExpired:
+                print(f"   ⏰ Push timeout - large file may still be uploading")
+                return False
             except Exception as e:
                 print(f"   ❌ Error during commit/push: {str(e)}")
                 return False
