@@ -5,7 +5,7 @@ on:
   push:
     branches: [ main ]
     paths:
-      - 'Zipped-Code/submodules.txt'
+      - 'submodules.txt'  # Changed from 'Zipped-Code/submodules.txt' to 'submodules.txt'
 
 jobs:
   zip-submodules:
@@ -275,10 +275,16 @@ jobs:
         try:
             print("🚀 Starting submodule processing...")
             
+            # Debug: List current directory contents
+            print("📁 Current directory contents:")
+            for item in os.listdir('.'):
+                print(f"  - {item}")
+            
             # Parse submodules file
             submodules_file = "submodules.txt"
             if not os.path.exists(submodules_file):
                 print(f"❌ {submodules_file} not found!")
+                print(f"📍 Current working directory: {os.getcwd()}")
                 sys.exit(1)
             
             submodules = parse_submodules(submodules_file)
